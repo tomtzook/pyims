@@ -1,6 +1,6 @@
-from typing import Dict
+from typing import Dict, List
 
-from pyims.sip.headers import HEADERS, Request
+from pyims.sip.headers import HEADERS, Request, Header
 from pyims.sip.sip_types import MessageType, METHODS, VERSIONS_BY_STR
 from pyims.sip.headers import Response
 from pyims.sip.message import RequestMessage, ResponseMessage, Message
@@ -20,7 +20,16 @@ def _read_headers(data: str):
     return lines[0], headers
 
 
-def parse_header(top_header: str, headers: Dict[str, str]):
+def _get_body_length(headers: List[Header]) -> int:
+    length_headers = [header for header in headers if header.name == 'Content-Length']
+    if len(length_headers) < 1:
+        return 0
+
+    # noinspection PyUnresolvedReferences
+    return length_headers[0].value
+
+
+def _parse_header(top_header: str, headers: Dict[str, str]):
     parsed_headers = list()
     message_type = None
     type_header = None
@@ -55,11 +64,16 @@ def parse_header(top_header: str, headers: Dict[str, str]):
     return message_type, type_header, parsed_headers
 
 
-def parse(data: str) -> Message:
-    data = data.split("\r\n\r\n")
-    top_header, raw_headers = _read_headers(data[0])
-    message_type, type_header, parsed_headers = parse_header(top_header, raw_headers)
-    body = data[1] if len(data) > 1 else None
+def parse(data: str, start_idx: int = 0) -> Message:
+    headers_end = data.find("\r\n\r\n", start_idx)
+    if headers_end < 0:
+        headers_end = len(data)
+
+    top_header, raw_headers = _read_headers(data[start_idx:headers_end])
+    message_type, type_header, parsed_headers = _parse_header(top_header, raw_headers)
+
+    body_len = _get_body_length(parsed_headers)
+    body = data[start_idx+headers_end+1:start_idx+headers_end+1+body_len] if body_len > 1 else ''
 
     if message_type == MessageType.REQUEST:
         return RequestMessage(type_header.version, type_header.method, type_header.uri, headers=parsed_headers, body=body)

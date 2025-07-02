@@ -2,7 +2,8 @@ from abc import ABC, abstractmethod
 from typing import Optional, Dict
 import re
 
-from pyims.sip.sip_types import (Method, Version, Status, AuthenticationScheme, AuthenticationAlgorithm,
+from pyims.sip.sip_types import (Method, Version, Status,
+                                 AuthenticationScheme, AuthenticationAlgorithm,
                                  STATUS_FROM_NUMBER, VERSIONS_BY_STR, AUTH_SCHEME_BY_STR, AUTH_ALGO_BY_STR)
 
 
@@ -38,6 +39,18 @@ class IdentityHeader(Header, ABC):
 
     def compose(self) -> str:
         return self.value
+
+
+class IntHeader(Header, ABC):
+
+    def __init__(self, value: Optional[int] = None):
+        self.value: Optional[int] = value
+
+    def parse_from(self, value: str):
+        self.value = int(value)
+
+    def compose(self) -> str:
+        return f"{self.value}"
 
 
 class CustomHeader(IdentityHeader):
@@ -114,10 +127,10 @@ class Response(Header):
         value = value.split(" ", 2)
         assert len(value) == 3
         self.version = VERSIONS_BY_STR[value[0]]
-        self.status = STATUS_FROM_NUMBER[int(value[1])]
+        self.status = Status(STATUS_FROM_NUMBER[int(value[1])], value[2])
 
     def compose(self) -> str:
-        return f"{self.version.value} {self.status.value[0]} {self.status.value[1]}"
+        return f"{self.version.value} {self.status.code.value[0]} {self.status.description}"
 
 
 class CSeq(Header):
@@ -158,6 +171,16 @@ class To(SenderSendeeHeader):
     @property
     def name(self) -> str:
         return "To"
+
+
+class ContentLength(IntHeader):
+
+    def __init__(self, value: Optional[int] = None):
+        super().__init__(value)
+
+    @property
+    def name(self) -> str:
+        return "Content-Length"
 
 
 class Via(Header):
@@ -236,4 +259,4 @@ class WWWAuthenticate(Header):
         return f"{self.scheme.value} {values}"
 
 
-HEADERS = [CSeq, CallID, From, To, Via, WWWAuthenticate]
+HEADERS = [CSeq, CallID, From, To, ContentLength, Via, WWWAuthenticate]

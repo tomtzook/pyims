@@ -5,9 +5,9 @@ from pyims.sip.transport import TcpTransport
 from pyims.sip.client import Client
 
 
-client = Client(TcpTransport('172.22.0.1', 5060, '172.22.0.21', 5060))
+client = Client(TcpTransport('172.22.0.1', 50601, '172.22.0.21', 5060))
 try:
-    client.request(RequestMessage(
+    resp = client.request(RequestMessage(
         Version.VERSION_2,
         Method.REGISTER,
         'sip:ims.mnc001.mcc001.3gppnetwork.org',
@@ -25,5 +25,6 @@ try:
             CustomHeader('Content-Length', '0')
         ]
     ))
+    print(resp)
 finally:
     client.close()

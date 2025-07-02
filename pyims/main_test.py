@@ -1,4 +1,4 @@
-from sip.sip_types import Version, Method, Status
+from sip.sip_types import Version, Method, StatusCode
 from sip.headers import CSeq, CallID, Via, From, To
 from sip.parser import parse
 from sip.composer import compose_request, compose_response
@@ -43,7 +43,7 @@ Via: SIP/2.0/UDP 192.168.101.2:5060;rport=5060;branch=z9hG4bK3987742761
 WWW-Authenticate: Digest realm="ims.mnc001.mcc001.3gppnetwork.org", nonce="8SA0p/qltIMlBqyAM/vqAFr2Rj1SH4AAMadojvfm1sU=", algorithm=AKAv1-MD5, ck="b12bd6d3bf809a6cf001a58187353060", ik="66cb51e13b70780e328e43ea52951d3f", qop="auth,auth-int"
 Path: <sip:term@pcscf.ims.mnc001.mcc001.3gppnetwork.org;lr>
 Server: Kamailio S-CSCF
-Content-Length: 0"
+Content-Length: 0
 """.replace('\n', '\r\n')
 
 print(parse(c))
@@ -62,7 +62,7 @@ print(compose_request(
 
 print(compose_response(
     Version.VERSION_2,
-    Status.OK,
+    StatusCode.OK,
     headers=[
         CSeq(Method.REGISTER, 1),
         From(uri='sip:001011234567895@ims.mnc001.mcc001.3gppnetwork.org'),

@@ -1,8 +1,8 @@
-from typing import List
+from typing import List, Union
 
 from pyims.sip.headers import Header
 from pyims.sip.message import RequestMessage, ResponseMessage
-from pyims.sip.sip_types import Version, Method, Status
+from pyims.sip.sip_types import Version, Method, Status, StatusCode
 
 
 def compose_request(version: Version, method: Method, server_uri: str, body: str, headers: List[Header] = None) -> str:
@@ -12,7 +12,7 @@ def compose_request(version: Version, method: Method, server_uri: str, body: str
     return RequestMessage(version, method, server_uri, headers, body).compose()
 
 
-def compose_response(version: Version, status: Status, headers: List[Header] = None) -> str:
+def compose_response(version: Version, status: Union[StatusCode, Status], headers: List[Header] = None) -> str:
     if headers is None:
         headers = list()
 

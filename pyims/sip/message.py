@@ -1,8 +1,8 @@
 from abc import ABC, abstractmethod
-from typing import List, Dict
+from typing import List, Dict, Union
 
-from pyims.sip.sip_types import Version, Status, MessageType, Method
 from pyims.sip.headers import Header, Request, Response
+from pyims.sip.sip_types import Version, MessageType, Method, Status, StatusCode
 
 
 class Message(ABC):
@@ -72,9 +72,9 @@ class RequestMessage(Message):
 
 class ResponseMessage(Message):
 
-    def __init__(self, version: Version, status: Status, headers: List[Header] = None, body: str = ''):
+    def __init__(self, version: Version, status: Union[StatusCode, Status], headers: List[Header] = None, body: str = ''):
         super().__init__(version, headers, body)
-        self._status = status
+        self._status = status if isinstance(status, Status) else Status(status, status.value[1])
 
     @property
     def status(self) -> Status:

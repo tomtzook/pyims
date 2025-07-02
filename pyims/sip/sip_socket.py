@@ -21,6 +21,8 @@ class SipTcpSocket(SipSocket):
 
     def __init__(self):
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
 
     def bind(self, address: str, port: int):
         self._socket.bind((address, port))
