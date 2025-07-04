@@ -76,7 +76,7 @@ def parse(data: str, start_idx: int = 0) -> Message:
     body = data[start_idx+headers_end+1:start_idx+headers_end+1+body_len] if body_len > 1 else ''
 
     for name, value in raw_headers.items():
-        if name not in parsed_headers:
+        if not any([header for header in parsed_headers if name == header.name]):
             parsed_headers.append(CustomHeader(name, value))
 
     if message_type == MessageType.REQUEST:

@@ -208,8 +208,7 @@ class Expires(IntHeader):
 
 class Contact(Header):
 
-    def __init__(self, identity: Optional[str] = None, address: Optional[InetAddress] = None):
-        self.identity = identity
+    def __init__(self, address: Optional[InetAddress] = None):
         self.address = address
 
     @property
@@ -217,14 +216,13 @@ class Contact(Header):
         return 'Contact'
 
     def parse_from(self, value: str):
-        match = re.search(r"^<sip:(.+)@(.+):(\d+)>.*$", value)
+        match = re.search(r"^<sip:(.+):(\d+)>.*$", value)
         assert match is not None, f"Invalid '{self.name}' header: {value}"
-        self.identity = match.group(1)
-        self.address = InetAddress(match.group(2), int(match.group(3)))
+        self.address = InetAddress(match.group(1), int(match.group(2)))
 
     def compose(self) -> str:
-        additional_tags = ';q=1.00;+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;video;+sip.instance="<urn:gsma:imei:35676506-815566-0>'
-        return f"<sip:{self.identity}@{self.address.ip}:{self.address.port}>{additional_tags}"
+        additional_tags = ';+sip.instance="<urn:gsma:imei:35622410-483840-0>";q=1.0;+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip'
+        return f"<sip:{self.address.ip}:{self.address.port}>{additional_tags}"
 
 
 class Via(Header):
@@ -301,14 +299,16 @@ class Authorization(Header):
 
     def compose(self) -> str:
         values = dict()
-        if self.additional_values is not None:
-            values.update(self.additional_values)
 
         values['username'] = self.username
         values['uri'] = self.uri
         values['realm'] = self.realm
         values['algorithm'] = self.algorithm.value
-        values['qop'] = self.qop
+        #values['qop'] = self.qop
+
+        if self.additional_values is not None:
+            values.update(self.additional_values)
+
         values = ','.join([f"{k}=\"{v}\"" for k, v in values.items()])
 
         return f"{self.scheme.value} {values}"
@@ -347,13 +347,15 @@ class WWWAuthenticate(Header):
 
     def compose(self) -> str:
         values = dict()
-        if self.additional_values is not None:
-            values.update(self.additional_values)
 
         values['nonce'] = self.nonce
         values['realm'] = self.realm
         values['algorithm'] = self.algorithm.value
         values['qop'] = self.qop
+
+        if self.additional_values is not None:
+            values.update(self.additional_values)
+
         values = ','.join([f"{k}=\"{v}\"" for k, v in values.items()])
 
         return f"{self.scheme.value} {values}"
