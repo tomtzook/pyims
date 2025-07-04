@@ -1,7 +1,9 @@
+import sys
 from typing import Optional
 import base64
 import io
 import hashlib
+import random
 
 from . import milenge
 from .headers import Authorization, WWWAuthenticate
@@ -10,8 +12,12 @@ from .sip_types import AuthenticationScheme, AuthenticationAlgorithm, Method
 
 class Account(object):
 
-    def __init__(self, mcc: str, mnc: str, imsi: str, sim_ki: str,
-                 sim_op: Optional[str] = None, sim_opc: Optional[str] = None,
+    def __init__(self,
+                 mcc: int, mnc: int,
+                 imsi: str,
+                 sim_ki: str,
+                 sim_op: Optional[str] = None,
+                 sim_opc: Optional[str] = None,
                  sim_amf: Optional[str] = None):
         self.mcc = mcc
         self.mnc = mnc
@@ -30,19 +36,21 @@ def create_password(account: Account, nonce: str) -> bytes:
     mac = nonce_decoded.read(8)
 
     res, ak = milenge.f2_f5(account.sim_ki, rand, account.sim_opc)
-    ck = milenge.f3(account.sim_ki, rand, account.sim_opc)
-    ik = milenge.f4(account.sim_ki, rand, account.sim_opc)
+    # ck = milenge.f3(account.sim_ki, rand, account.sim_opc)
+    # ik = milenge.f4(account.sim_ki, rand, account.sim_opc)
 
     sqn = milenge.xor(sqnxoraka, ak)
     xmac, _ = milenge.f1(account.sim_ki, sqn, rand, account.sim_opc, account.sim_amf)
 
     assert xmac == mac
-    # res, ck, ik = gsm_milenage_f2345(account.sim_ki, account.sim_opc, rnd)
 
     return res
 
 
-def create_auth_md5(username: str, password: bytes, realm: str, uri: str, method: str, nonce: str) -> str:
+def create_auth_md5(username: str, password: bytes,
+                    realm: str, uri: str, method: str,
+                    nonce: str, nc: str, cnonce: str,
+                    auth_type: str) -> str:
     a1 = hashlib.md5()
     a1.update(username.encode('utf-8'))
     a1.update(b':')
@@ -62,7 +70,14 @@ def create_auth_md5(username: str, password: bytes, realm: str, uri: str, method
     resp.update(b':')
     resp.update(nonce.encode('utf-8'))
     resp.update(b':')
+    resp.update(nc.encode('utf-8'))
+    resp.update(b':')
+    resp.update(cnonce.encode('utf-8'))
+    resp.update(b':')
+    resp.update(auth_type.encode('utf-8'))
+    resp.update(b':')
     resp.update(a2.encode('utf-8'))
+
     return resp.hexdigest()
 
 
@@ -70,25 +85,40 @@ def create_auth_header(method: Method, account: Account, host: str, requested_au
     username = f"{account.imsi}@{host}"
     realm = host
     uri = f"sip:{host}"
+    auth_type = requested_auth.qop if requested_auth else 'auth'
+    nc = None
+    cnonce = None
     nonce = ''
     response = ''
+
     if requested_auth is not None:
+        username = account.imsi
         nonce = requested_auth.nonce
+        nonce_count = 1
+        nc = f"{nonce_count:08d}"
+        cnonce = hex(random.randint(0, sys.maxsize))[2:]
+
         response = create_auth_md5(
             username,
             create_password(account, nonce),
             realm,
             uri,
             method.name,
-            nonce
+            nonce,
+            nc,
+            cnonce,
+            auth_type
         )
 
     return Authorization(
-                scheme=AuthenticationScheme.DIGEST,
-                username=username,
-                uri=uri,
-                realm=realm,
-                algorithm=AuthenticationAlgorithm.AKA,
-                qop='auth',
-                additional_values=dict(nonce=nonce, response=response)
+            scheme=AuthenticationScheme.DIGEST,
+            username=username,
+            uri=uri,
+            realm=realm,
+            algorithm=AuthenticationAlgorithm.AKA,
+            qop=auth_type,
+            nc=nc,
+            cnonce=cnonce,
+            nonce=nonce,
+            response=response
     )

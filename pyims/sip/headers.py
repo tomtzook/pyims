@@ -208,21 +208,46 @@ class Expires(IntHeader):
 
 class Contact(Header):
 
-    def __init__(self, address: Optional[InetAddress] = None):
+    def __init__(self, address: Optional[InetAddress] = None,
+                 internal_tags: Optional[Dict[str, str]] = None,
+                 external_tags: Optional[Dict[str, str]] = None):
         self.address = address
+        self.internal_tags = internal_tags
+        self.external_tags = external_tags
 
     @property
     def name(self) -> str:
         return 'Contact'
 
     def parse_from(self, value: str):
-        match = re.search(r"^<sip:(.+):(\d+)>.*$", value)
+        match = re.search(r"^<sip:(.+):(\d+)(?:;(.*))?>(?:;(.*))?$", value)
         assert match is not None, f"Invalid '{self.name}' header: {value}"
         self.address = InetAddress(match.group(1), int(match.group(2)))
+        self.internal_tags = self._breakup_tags(match.group(3))
+        self.external_tags = self._breakup_tags(match.group(4))
 
     def compose(self) -> str:
-        additional_tags = ';+sip.instance="<urn:gsma:imei:35622410-483840-0>";q=1.0;+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip'
-        return f"<sip:{self.address.ip}:{self.address.port}>{additional_tags}"
+        return f"<sip:{self.address.ip}:{self.address.port}{self._compose_tags(self.internal_tags)}>{self._compose_tags(self.external_tags)}"
+
+    def _breakup_tags(self, tags: Optional[str]) -> Dict[str, str]:
+        parsed = dict()
+        if tags is None:
+            return parsed
+
+        for tag in tags.split(';'):
+            if '=' in tag:
+                vals = tag.split('=', 1)
+                parsed[vals[0]] = vals[1]
+            else:
+                parsed[tag] = None
+
+        return parsed
+
+    def _compose_tags(self, tags: Optional[Dict[str, str]]) -> str:
+        if tags is None:
+            return ''
+
+        return ';' + ';'.join([f"{k}={v}" if v is not None else k for k,v in tags.items()])
 
 
 class Via(Header):
@@ -269,6 +294,10 @@ class Authorization(Header):
                  realm: Optional[str] = None,
                  algorithm: Optional[AuthenticationAlgorithm] = None,
                  qop: Optional[str] = None,
+                 nc: Optional[str] = None,
+                 cnonce: Optional[str] = None,
+                 nonce: Optional[str] = None,
+                 response: Optional[str] = None,
                  additional_values: Optional[Dict[str, str]] = None):
         self.scheme: Optional[AuthenticationScheme] = scheme
         self.username: Optional[str] = username
@@ -276,6 +305,10 @@ class Authorization(Header):
         self.realm: Optional[str] = realm
         self.algorithm: Optional[AuthenticationAlgorithm] = algorithm
         self.qop: Optional[str] = qop
+        self.nc: Optional[str] = nc
+        self.cnonce: Optional[str] = cnonce
+        self.nonce: Optional[str] = nonce
+        self.response: Optional[str] = response
         self.additional_values: Optional[Dict[str, str]] = additional_values
 
     @property
@@ -294,6 +327,10 @@ class Authorization(Header):
         self.realm = values.pop('realm')
         self.algorithm = AUTH_ALGO_BY_STR[values.pop('algorithm')]
         self.qop = values.pop('qop')
+        self.nc = values.pop('nc')
+        self.cnonce = values.pop('cnonce')
+        self.nonce = values.pop('nonce')
+        self.response = values.pop('response')
 
         self.additional_values = values
 
@@ -303,13 +340,24 @@ class Authorization(Header):
         values['username'] = self.username
         values['uri'] = self.uri
         values['realm'] = self.realm
-        values['algorithm'] = self.algorithm.value
-        #values['qop'] = self.qop
+
+        if self.cnonce:
+            values['cnonce'] = self.cnonce
+        if self.nonce:
+            values['nonce'] = self.nonce
+        if self.response:
+            values['response'] = self.response
 
         if self.additional_values is not None:
             values.update(self.additional_values)
 
         values = ','.join([f"{k}=\"{v}\"" for k, v in values.items()])
+        if self.qop:
+            values += f",qop={self.qop}"
+        if self.nc:
+            values += f",nc={self.nc}"
+        if self.algorithm:
+            values += f",algorithm={self.algorithm.value}"
 
         return f"{self.scheme.value} {values}"
 

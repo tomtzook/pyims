@@ -1,4 +1,5 @@
 import logging
+import random
 from contextlib import contextmanager
 from typing import List, Optional
 
@@ -45,9 +46,16 @@ class Client(object):
                     print('Ok')
                     break
                 elif response.status.code == StatusCode.UNAUTHORIZED:
+                    # we must authorize ourselves
                     assert 'WWW-Authenticate' in response.headers
-                    transaction.send(self._create_request(Method.REGISTER, '',
-                                                          headers=self._create_headers_for_register(response.headers['WWW-Authenticate'])))
+                    auth_header = response.headers['WWW-Authenticate']
+                    assert isinstance(auth_header, WWWAuthenticate)
+
+                    transaction.send(
+                        self._create_request(
+                            Method.REGISTER, '',
+                            headers=self._create_headers_for_register(auth_header))
+                    )
                     continue
                 else:
                     raise RuntimeError(f"Register failed: {response.status}")
@@ -75,19 +83,6 @@ class Client(object):
     def close(self):
         self._transport.close()
 
-    def _create_headers_for_register(self, authenticate_header: Optional[WWWAuthenticate] = None):
-        return [
-            From(uri=f"sip:{self._account.imsi}@{self._server_host}", tag='4130282085'),
-            To(uri=f"sip:{self._account.imsi}@{self._server_host}"),
-            CallID(f"1-119985@{self._local_address.ip}"),
-            CustomHeader('Supported', 'path'),
-            CustomHeader('P-Access-Network-Info', '3GPP-E-UTRAN-FDD; utran-cell-id-3gpp=001010001000019B'),
-            CustomHeader('Allow', ','.join([method.value for method in list(Method)])),
-            Via(Version.VERSION_2, 'TCP', self._local_address, branch='z9hG4bK3987742761'),
-            Contact(self._local_address),
-            create_auth_header(Method.REGISTER, self._account, self._server_host, authenticate_header)
-        ]
-
     def _create_request(self, method: Method,
                         body: str,
                         seq_num: int = 1,
@@ -97,11 +92,44 @@ class Client(object):
         request.add_header(MaxForwards(70), override=False)
         request.add_header(Expires(1800), override=False)
         request.add_header(ContentLength(len(body)), override=True)
+        request.add_header(Via(Version.VERSION_2, 'TCP', self._local_address, branch=self._generate_branch(method)))
 
         return request
+
+    def _create_headers_for_register(self, authenticate_header: Optional[WWWAuthenticate] = None):
+        return [
+            From(
+                uri=f"sip:{self._account.imsi}@{self._server_host}",
+                tag='1'
+            ),
+            To(uri=f"sip:{self._account.imsi}@{self._server_host}"),
+            CallID(f"1-119985@{self._local_address.ip}"),
+            CustomHeader('Supported', 'path'),
+            CustomHeader(
+                'P-Access-Network-Info',
+                '3GPP-E-UTRAN-FDD; utran-cell-id-3gpp=001010001000019B'
+            ),
+            CustomHeader(
+                'Allow',
+                ','.join([method.value for method in list(Method)])
+            ),
+            Contact(
+                self._local_address,
+                external_tags={
+                    '+sip.instance': '"<urn:gsma:imei:35622410-483840-0>"',
+                    'q': '1.0',
+                    '+g.3gpp.icsi-ref': '"urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel"',
+                    '+g.3gpp.smsip': None
+                }
+            ),
+            create_auth_header(Method.REGISTER, self._account, self._server_host, authenticate_header)
+        ]
 
     def _on_request(self, client: SipSocket, request: RequestMessage):
         pass
 
-    def _generate_ims_host(self):
-        return f"ims.mnc{self._account.mnc}.mcc{self._account.mcc}.3gppnetwork.org"
+    def _generate_branch(self, method: Method) -> str:
+        return f"pyimsbranch-{random.randint(100, 5000)}-{method.name.lower()}"
+
+    def _generate_ims_host(self) -> str:
+        return f"ims.mnc{self._account.mnc:03d}.mcc{self._account.mcc:03d}.3gppnetwork.org"
