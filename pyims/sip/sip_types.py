@@ -43,7 +43,6 @@ class AuthenticationAlgorithm(enum.Enum):
 
 Status = namedtuple('Status', 'code,description')
 
-
 METHODS = [method.name for method in list(Method)]
 VERSIONS_BY_STR = {version.value: version for version in list(Version)}
 STATUS_FROM_NUMBER = {status.value[0]: status for status in list(StatusCode)}

@@ -3,7 +3,6 @@ import socket
 import threading
 import os
 import time
-import traceback
 import logging
 from abc import ABC, abstractmethod
 from typing import Callable, Dict, List
@@ -233,6 +232,7 @@ class Selector(object):
         self._exception_skt: List = []
         self._lock = threading.RLock()
         self._eventfd = os.eventfd(0, os.EFD_NONBLOCK)
+        self._stop_run = False
 
     def register(self, registration: SelectorRegistration):
         with self._lock:
@@ -243,9 +243,17 @@ class Selector(object):
             registration.attach(self._on_reg_config_changed, self._lock)
             self._signal_run()
 
+    def disable(self):
+        with self._lock:
+            self._stop_run = True
+            self._signal_run()
+
     def run(self, timeout: float):
         try:
             with self._lock:
+                if self._stop_run:
+                    return
+
                 self._recompute_select_lists()
 
             logger.debug('[Selector] Entering select (r=%d, w=%d, e=%d)', len(self._readable_skt),
@@ -255,6 +263,9 @@ class Selector(object):
             logger.debug('[Selector] Exiting select (r=%d, w=%d, e=%d)', len(readable), len(writable), len(exceptional))
 
             with self._lock:
+                if self._stop_run:
+                    return
+
                 for skt_id in exceptional:
                     if skt_id in self._sockets:
                         self._sockets[skt_id].on_except()
@@ -274,7 +285,7 @@ class Selector(object):
             time.sleep(timeout)  # wait and try again
 
     def run_forever(self, timeout: float):
-        while True:
+        while not self._stop_run:
             self.run(timeout)
 
     def _recompute_select_lists(self):
@@ -310,3 +321,19 @@ class Selector(object):
     def _signal_run(self):
         logger.debug('[Selector] Signalling Run')
         os.eventfd_write(self._eventfd, 1)
+
+
+class SelectorThread(object):
+
+    def __init__(self):
+        self._selector = Selector()
+        self._thread = threading.Thread(target=self._selector.run_forever, args=(100,), daemon=True)
+        self._thread.start()
+
+    @property
+    def selector(self) -> Selector:
+        return self._selector
+
+    def __del__(self):
+        self._selector.disable()
+        self._thread.join()

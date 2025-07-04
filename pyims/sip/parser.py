@@ -1,6 +1,6 @@
 from typing import Dict, List
 
-from pyims.sip.headers import HEADERS, Request, Header
+from pyims.sip.headers import HEADERS, Request, Header, CustomHeader
 from pyims.sip.sip_types import MessageType, METHODS, VERSIONS_BY_STR
 from pyims.sip.headers import Response
 from pyims.sip.message import RequestMessage, ResponseMessage, Message
@@ -74,6 +74,10 @@ def parse(data: str, start_idx: int = 0) -> Message:
 
     body_len = _get_body_length(parsed_headers)
     body = data[start_idx+headers_end+1:start_idx+headers_end+1+body_len] if body_len > 1 else ''
+
+    for name, value in raw_headers.items():
+        if name not in parsed_headers:
+            parsed_headers.append(CustomHeader(name, value))
 
     if message_type == MessageType.REQUEST:
         return RequestMessage(type_header.version, type_header.method, type_header.uri, headers=parsed_headers, body=body)

@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from typing import Optional, Dict
 import re
 
+from pyims.nio.inet import InetAddress
 from pyims.sip.sip_types import (Method, Version, Status,
                                  AuthenticationScheme, AuthenticationAlgorithm,
                                  STATUS_FROM_NUMBER, VERSIONS_BY_STR, AUTH_SCHEME_BY_STR, AUTH_ALGO_BY_STR)
@@ -183,15 +184,36 @@ class ContentLength(IntHeader):
         return "Content-Length"
 
 
+class MaxForwards(IntHeader):
+
+    def __init__(self, value: Optional[int] = None):
+        super().__init__(value)
+
+    @property
+    def name(self) -> str:
+        return "Max-Forwards"
+
+
+class Expires(IntHeader):
+
+    def __init__(self, value: Optional[int] = None):
+        super().__init__(value)
+
+    @property
+    def name(self) -> str:
+        return "Expires"
+
+
 class Via(Header):
 
-    def __init__(self, version: Optional[Version] = None, transport: Optional[str] = None,
-                 address: Optional[str] = None,
+    def __init__(self, version: Optional[Version] = None,
+                 transport: Optional[str] = None,
+                 address: Optional[InetAddress] = None,
                  rport: Optional[str] = None,
                  branch: Optional[str] = None):
         self.version: Optional[Version] = version
         self.transport: Optional[str] = transport
-        self.address: Optional[str] = address
+        self.address: Optional[InetAddress] = address
         self.rport: Optional[str] = rport
         self.branch: Optional[str] = branch
 
@@ -204,12 +226,12 @@ class Via(Header):
         assert match is not None, f"Invalid '{self.name}' header: {value}"
         self.version = VERSIONS_BY_STR[match.group(1)]
         self.transport = match.group(2)
-        self.address = match.group(3)
+        self.address = InetAddress(*match.group(3).split(':', 1))
         self.rport = match.group(4)
         self.branch = match.group(5)
 
     def compose(self) -> str:
-        res = f"{self.version.value}/{self.transport} {self.address}"
+        res = f"{self.version.value}/{self.transport} {self.address.ip}:{self.address.port}"
         if self.rport:
             res += f";rport={self.rport}"
         if self.branch:
@@ -259,4 +281,4 @@ class WWWAuthenticate(Header):
         return f"{self.scheme.value} {values}"
 
 
-HEADERS = [CSeq, CallID, From, To, ContentLength, Via, WWWAuthenticate]
+HEADERS = [CSeq, CallID, From, To, ContentLength, MaxForwards, Expires, Via, WWWAuthenticate]
