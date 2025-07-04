@@ -22,6 +22,11 @@ class Message(ABC):
     def headers(self) -> Dict[str, Header]:
         return self._headers
 
+    def add_header(self, header: Header, override: bool = True):
+        if header.name in self._headers and not override:
+            return
+        self._headers[header.name] = header
+
     @property
     def body(self) -> str:
         return self._body
@@ -64,7 +69,8 @@ class RequestMessage(Message):
         request_header.uri = self._server_uri
 
         res = request_header.compose()
-        res += '\r\n' + '\r\n'.join([f"{header.name}: {header.compose()}" for header in self.headers.values()])
+        if len(self._headers) > 0:
+            res += '\r\n' + '\r\n'.join([f"{header.name}: {header.compose()}" for header in self.headers.values()])
         res += '\r\n\r\n' + self.body
 
         return res
@@ -90,6 +96,8 @@ class ResponseMessage(Message):
         request_header.status = self._status
 
         res = request_header.compose()
-        res += '\r\n' + '\r\n'.join([f"{header.name}: {header.compose()}" for header in self.headers.values()])
+        if len(self._headers) > 0:
+            res += '\r\n' + '\r\n'.join([f"{header.name}: {header.compose()}" for header in self.headers.values()])
+        res += '\r\n\r\n'
 
         return res

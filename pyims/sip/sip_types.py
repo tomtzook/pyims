@@ -31,6 +31,7 @@ class StatusCode(enum.Enum):
     OK = (200, 'OK')
     UNAUTHORIZED = (401, 'Unauthorized')
     INTERNAL_SERVER_ERROR = (500, 'Internal Server Error')
+    SERVER_TIMEOUT = ( 504, 'Server Time-out')
 
 
 class AuthenticationScheme(enum.Enum):
@@ -39,6 +40,7 @@ class AuthenticationScheme(enum.Enum):
 
 class AuthenticationAlgorithm(enum.Enum):
     AKA = 'AKAv1-MD5'
+    MD5 = 'MD5'
 
 
 Status = namedtuple('Status', 'code,description')

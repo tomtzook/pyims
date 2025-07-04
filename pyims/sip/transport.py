@@ -2,7 +2,7 @@ from typing import Optional, Callable
 
 from pyims.nio.selector import Selector, SelectorThread
 from pyims.nio.sockets import InetAddress, TcpSocket, TcpServerSocket
-from pyims.sip.message import RequestMessage, ResponseMessage
+from pyims.sip.message import RequestMessage, ResponseMessage, Message
 from pyims.sip.sockets import AutoConnectSipTcpSocket, SipTcpSocket
 
 
@@ -15,7 +15,7 @@ class TcpTransaction(object):
         self._socket.send(msg)
         return self.await_response(timeout=timeout)
 
-    def respond(self, msg: ResponseMessage):
+    def send(self, msg: Message):
         self._socket.send(msg)
 
     def await_response(self, timeout: float = 5) -> ResponseMessage:
@@ -25,6 +25,9 @@ class TcpTransaction(object):
 
         assert isinstance(response, ResponseMessage), 'message is not response'
         return response
+
+    def close(self):
+        self._socket.close()
 
 
 class TcpTransport(object):
@@ -59,3 +62,7 @@ class TcpTransport(object):
         self._server_socket.register_to(self._selector_thread.selector)
         self._server_socket.bind(local_address.ip, local_address.port)
         self._server_socket.listen(10, _on_new_connect)
+
+    def close(self):
+        if self._server_socket is not None:
+            self._server_socket.close()

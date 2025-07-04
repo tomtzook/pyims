@@ -204,6 +204,27 @@ class Expires(IntHeader):
         return "Expires"
 
 
+class Contact(Header):
+
+    def __init__(self, identity: Optional[str] = None, address: Optional[InetAddress] = None):
+        self.identity = identity
+        self.address = address
+
+    @property
+    def name(self) -> str:
+        return 'Contact'
+
+    def parse_from(self, value: str):
+        match = re.search(r"^<sip:(.+)@(.+):(\d+)>.*$", value)
+        assert match is not None, f"Invalid '{self.name}' header: {value}"
+        self.identity = match.group(1)
+        self.address = InetAddress(match.group(2), int(match.group(3)))
+
+    def compose(self) -> str:
+        additional_tags = ';q=1.00;+g.3gpp.icsi-ref="urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel";+g.3gpp.smsip;video;+sip.instance="<urn:gsma:imei:35676506-815566-0>'
+        return f"<sip:{self.identity}@{self.address.ip}:{self.address.port}>{additional_tags}"
+
+
 class Via(Header):
 
     def __init__(self, version: Optional[Version] = None,
@@ -281,4 +302,4 @@ class WWWAuthenticate(Header):
         return f"{self.scheme.value} {values}"
 
 
-HEADERS = [CSeq, CallID, From, To, ContentLength, MaxForwards, Expires, Via, WWWAuthenticate]
+HEADERS = [CSeq, CallID, From, To, Contact, ContentLength, MaxForwards, Expires, Via, WWWAuthenticate]
