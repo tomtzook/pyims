@@ -101,3 +101,5 @@ class TcpTransport(Transport):
     def close(self):
         if self._server_socket is not None:
             self._server_socket.close()
+
+        del self._selector_thread

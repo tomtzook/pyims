@@ -263,7 +263,6 @@ class Via(Header):
 
 
 class Authorization(Header):
-    # Authorization: Digest username="[field3]",realm="[field1]",nonce="",algorithm=MD5,uri="sip:ims.voiceblue.com",response="",qop=auth,nc=00000001,cnonce=""
 
     def __init__(self,
                  scheme: Optional[AuthenticationScheme] = None,
