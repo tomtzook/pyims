@@ -3,8 +3,7 @@ import logging
 from typing import Optional, Callable
 
 from .inet import InetAddress
-from .selector import Selector, TcpRegistration, TcpServerRegistration
-
+from .selector import Selector, TcpRegistration, TcpServerRegistration, UdpRegistration
 
 logger = logging.getLogger('pyims.nio.sockets')
 
@@ -152,6 +151,59 @@ class TcpServerSocket(object):
 
     def _on_error(self, ex: Exception):
         logger.exception('[Socket, %d] [TCP-S] On Error', self._socket.fileno(), exc_info=ex)
+        self.close()
+
+    def __del__(self):
+        self.close()
+
+
+class UdpSocket(object):
+
+    def __init__(self):
+        self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        self._socket.setblocking(False)
+        self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+
+        self._registration = UdpRegistration(self._socket, self._on_read, self._on_error)
+
+        self._read_callback = None
+        self._connect_callback = None
+        self._local_address: Optional[InetAddress] = None
+
+    @property
+    def local_address(self) -> InetAddress:
+        assert self._local_address is not None, "not bound to a local address"
+        return self._local_address
+
+    def register_to(self, selector: Selector):
+        selector.register(self._registration)
+
+    def bind(self, address: str, port: int):
+        logger.info('[Socket, %d] [UDP] Binding to %s:%d', self._socket.fileno(), address, port)
+        self._socket.bind((address, port))
+        self._local_address = InetAddress(address, port)
+
+    def start_read(self, callback: Callable[[InetAddress, bytes], None]):
+        logger.info('[Socket, %d] [UDP] Starting auto read', self._socket.fileno())
+        self._read_callback = callback
+        self._registration.start_read()
+
+    def write(self, dest: InetAddress, data: bytes):
+        logger.info('[Socket, %d] [UDP] Writing data (dest %s, len %d)', self._socket.fileno(), dest, len(data))
+        self._registration.enqueue_send(dest, data)
+
+    def close(self):
+        logger.info('[Socket, %d] [UDP] Closing', self._socket.fileno())
+        self._socket.close()
+
+    def _on_read(self, sender: InetAddress, data: bytes):
+        logger.debug('[Socket, %d] [UDP] On Read data (sender %s, len %d)', self._socket.fileno(), sender, len(data))
+        if self._read_callback is not None:
+            self._read_callback(sender, data)
+
+    def _on_error(self, ex: Exception):
+        logger.exception('[Socket, %d] [UDP] On Error', self._socket.fileno(), exc_info=ex)
         self.close()
 
     def __del__(self):

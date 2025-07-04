@@ -1,29 +1,92 @@
-from typing import Optional, Callable
+import io
+import logging
+import threading
 from abc import ABC, abstractmethod
+from collections import deque
+from typing import Optional, Callable, Tuple, List
 
+from .message import Message
+from .parser import parse
 from ..nio.selector import Selector, SelectorThread
-from ..nio.sockets import InetAddress, TcpSocket, TcpServerSocket
-from .message import RequestMessage, ResponseMessage, Message
-from .sockets import AutoConnectSipTcpSocket, SipTcpSocket, SipSocket
+from ..nio.sockets import InetAddress, TcpSocket, UdpSocket
+
+logger = logging.getLogger('pyims.sip.transport')
 
 
 class Transaction(ABC):
 
-    @abstractmethod
-    def request(self, msg: RequestMessage, timeout: float = 5) -> ResponseMessage:
-        pass
+    def __init__(self, on_new_messages: Optional[Callable[[], None]] = None):
+        self._lock = threading.RLock()
+        self._read_event = threading.Event()
+        self._read_buff = io.BytesIO()
+        self._in_message_queue: deque[Message] = deque()
+        self._on_new_messages = on_new_messages
 
     @abstractmethod
     def send(self, msg: Message):
         pass
 
-    @abstractmethod
-    def await_response(self, timeout: float = 5) -> ResponseMessage:
-        pass
+    def await_message(self, timeout: float = 5) -> Optional[Message]:
+        with self._lock:
+            if len(self._in_message_queue) > 0:
+                return self._in_message_queue.popleft()
+
+        if self._read_event.wait(timeout):
+            self._read_event.clear()
+
+            with self._lock:
+                return self._in_message_queue.popleft()
+        else:
+            raise TimeoutError()
 
     @abstractmethod
     def close(self):
         pass
+
+    def _on_read(self, data: bytes):
+        read_callback = None
+        has_new_messages = False
+        with self._lock:
+            self._read_buff.write(data)
+
+            self._read_buff.seek(0, io.SEEK_SET)
+            data = self._read_buff.getvalue()
+            new_pos, messages = self._parse_messages(data)
+            self._in_message_queue.extend(messages)
+
+            data = data[new_pos:]
+            self._read_buff.write(data)
+            self._read_buff.truncate(len(data))
+
+            if len(messages) > 0:
+                has_new_messages = True
+                read_callback = self._on_new_messages
+
+        if has_new_messages:
+            logger.info('[SIP] Notifying new messages')
+            self._read_event.set()
+
+            if read_callback is not None:
+                read_callback()
+
+    @staticmethod
+    def _parse_messages(data: bytes) -> Tuple[int, List[Message]]:
+        data = data.decode('utf-8')
+
+        messages = []
+        start = 0
+
+        while start < len(data):
+            end_of_headers = data.find('\r\n\r\n', start)
+            if end_of_headers < 0:
+                break
+
+            message = parse(data, start)
+            messages.append(message)
+
+            start = end_of_headers + len('\r\n\r\n') + len(message.body)
+
+        return start, messages
 
 
 class Transport(ABC):
@@ -34,11 +97,7 @@ class Transport(ABC):
         pass
 
     @abstractmethod
-    def start_transaction(self, local_address: InetAddress, remote_address: InetAddress) -> Transaction:
-        pass
-
-    @abstractmethod
-    def start_listen(self, local_address: InetAddress, on_request: Callable[[SipSocket, RequestMessage], None]):
+    def open(self, local_address: InetAddress, remote_address: InetAddress, on_new_messages: Callable[[], None]) -> Transaction:
         pass
 
     @abstractmethod
@@ -48,26 +107,60 @@ class Transport(ABC):
 
 class TcpTransaction(Transaction):
 
-    def __init__(self, selector: Selector, local_address: InetAddress, remote_address: InetAddress):
-        self._socket = AutoConnectSipTcpSocket(local_address, remote_address, selector)
+    def __init__(self, selector: Selector, local_address: InetAddress, remote_address: InetAddress, on_new_messages: Callable[[], None]):
+        super().__init__(on_new_messages)
+        self._socket: Optional[TcpSocket] = None
+        self._is_connected: bool = False
+        self._out_message_queue: deque[Message] = deque()
 
-    def request(self, msg: RequestMessage, timeout: float = 5) -> ResponseMessage:
-        self._socket.send(msg)
-        return self.await_response(timeout=timeout)
+        self._start_open_and_connect(selector, local_address, remote_address)
 
-    def send(self, msg: Message):
-        self._socket.send(msg)
+    def send(self, message: Message):
+        with self._lock:
+            logger.debug('[SIP] [TCP-C] User sending new message %s', message.compose())
 
-    def await_response(self, timeout: float = 5) -> ResponseMessage:
-        response = self._socket.await_message(timeout)
-        if response is None:
-            raise TimeoutError()
+            if self._socket is None:
+                return
 
-        assert isinstance(response, ResponseMessage), 'message is not response'
-        return response
+            if not self._is_connected:
+                self._out_message_queue.append(message)
+            else:
+                self._socket.write(message.compose().encode("utf-8"))
 
     def close(self):
-        self._socket.close()
+        with self._lock:
+            if self._socket is not None:
+                self._socket.close()
+                self._socket = None
+
+    def _start_open_and_connect(self, selector: Selector, local_address: InetAddress, remote_address: InetAddress):
+        logger.info('[SIP] [TCP-C] Opening new socket (bind %s) and connecting (remote %s)', local_address,
+                    remote_address)
+
+        skt = TcpSocket()
+        skt.bind(local_address.ip, local_address.port)
+        skt.register_to(selector)
+        self._socket = skt
+
+        skt.connect(remote_address.ip, remote_address.port, self._on_connect)
+
+    def _on_connect(self):
+        with self._lock:
+            if self._socket is None:
+                return
+
+            logger.info('[SIP] [TCP-C] Socket finished connect')
+
+            self._is_connected = True
+            self._read_buff.truncate()
+            self._in_message_queue.clear()
+            self._socket.start_read(self._on_read)
+            self._flush_write_queue()
+
+    def _flush_write_queue(self):
+        while len(self._out_message_queue) > 0:
+            message = self._out_message_queue.popleft()
+            self._socket.write(message.compose().encode('utf-8'))
 
 
 class TcpTransport(Transport):
@@ -76,39 +169,59 @@ class TcpTransport(Transport):
         super().__init__()
         self._selector_thread = SelectorThread()
 
-        self._server_socket: Optional[TcpServerSocket] = None
-
     @property
     def name(self) -> str:
         return 'TCP'
 
-    def start_transaction(self, local_address: InetAddress, remote_address: InetAddress) -> Transaction:
-        return TcpTransaction(self._selector_thread.selector, local_address, remote_address)
-
-    def start_listen(self, local_address: InetAddress, on_request: Callable[[SipSocket, RequestMessage], None]):
-        if self._server_socket is not None:
-            self._server_socket.close()
-            self._server_socket = None
-
-        def _on_next_read(skt: SipTcpSocket):
-            request = skt.await_message(0.1)
-            assert isinstance(request, RequestMessage), "message is not request"
-            on_request(skt, request)
-
-        def _on_new_connect(client: TcpSocket):
-            client.register_to(self._selector_thread.selector)
-
-            sip_skt = SipTcpSocket()
-            # noinspection PyProtectedMember
-            sip_skt._attach_socket(client, connected=True, on_next_read=lambda: _on_next_read(sip_skt))
-        
-        self._server_socket = TcpServerSocket()
-        self._server_socket.register_to(self._selector_thread.selector)
-        self._server_socket.bind(local_address.ip, local_address.port)
-        self._server_socket.listen(10, _on_new_connect)
+    def open(self, local_address: InetAddress, remote_address: InetAddress, on_new_messages: Callable[[], None]) -> Transaction:
+        return TcpTransaction(self._selector_thread.selector, local_address, remote_address, on_new_messages)
 
     def close(self):
-        if self._server_socket is not None:
-            self._server_socket.close()
+        del self._selector_thread
 
+
+class UdpTransaction(Transaction):
+
+    def __init__(self, selector: Selector, local_address: InetAddress, remote_address: InetAddress, on_new_messages: Callable[[], None]):
+        super().__init__(on_new_messages)
+        self._socket = UdpSocket()
+        self._remote_address = remote_address
+
+        self._socket.bind(local_address.ip, local_address.port)
+        self._socket.register_to(selector)
+        self._socket.start_read(self._on_read_custom)
+
+    def send(self, message: Message):
+        with self._lock:
+            logger.debug('[SIP] [UDP] User sending new message %s', message.compose())
+
+            if self._socket is None:
+                return
+
+            self._socket.write(self._remote_address, message.compose().encode("utf-8"))
+
+    def close(self):
+        with self._lock:
+            if self._socket is not None:
+                self._socket.close()
+                self._socket = None
+
+    def _on_read_custom(self, sender: InetAddress, data: bytes):
+        self._on_read(data)
+
+
+class UdpTransport(Transport):
+
+    def __init__(self, ):
+        super().__init__()
+        self._selector_thread = SelectorThread()
+
+    @property
+    def name(self) -> str:
+        return 'UDP'
+
+    def open(self, local_address: InetAddress, remote_address: InetAddress, on_new_messages: Callable[[], None]) -> Transaction:
+        return UdpTransaction(self._selector_thread.selector, local_address, remote_address, on_new_messages)
+
+    def close(self):
         del self._selector_thread

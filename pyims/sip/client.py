@@ -1,17 +1,15 @@
 import logging
 import random
 from contextlib import contextmanager
-from typing import List, Optional
+from typing import List, Optional, Union
 
-from ..nio.inet import InetAddress
-from .headers import Header, CSeq, Via, CallID, ContentLength, Expires, MaxForwards, CustomHeader, From, To, \
-    Contact, Authorization, WWWAuthenticate
-from .message import RequestMessage
-from .sip_types import Method, Version, StatusCode, AuthenticationScheme, AuthenticationAlgorithm
-from .sockets import SipSocket
-from .transport import Transport
 from .auth import Account, create_auth_header
-
+from .headers import Header, CSeq, Via, CallID, ContentLength, Expires, MaxForwards, CustomHeader, From, To, \
+    Contact, WWWAuthenticate
+from .message import RequestMessage, ResponseMessage
+from .sip_types import Method, Version, StatusCode, MessageType, Status
+from .transport import Transport, Transaction
+from ..nio.inet import InetAddress
 
 logger = logging.getLogger('pyims.sip.client')
 
@@ -28,24 +26,23 @@ class Client(object):
         self._server_endpoint = server_endpoint
         self._account = account
         self._server_host = self._generate_ims_host()
+        self._transaction: Optional[Transaction] = None
+        self._in_transaction: bool = False
 
     def register(self):
         logger.info('Client starting registration with network')
-
-        self._transport.start_listen(self._local_address, self._on_request)
 
         with self._request(self._create_request(
                 Method.REGISTER,
                 headers=self._create_headers_for_register())) as transaction:
             while True:
-                response = transaction.await_response(timeout=5)
+                response = transaction.await_message(timeout=10)
+                assert isinstance(response, ResponseMessage)
                 print(response)
 
                 if response.status.code == StatusCode.TRYING:
-                    print('Trying')
                     continue
                 elif response.status.code == StatusCode.OK:
-                    print('Ok')
                     break
                 elif response.status.code == StatusCode.UNAUTHORIZED:
                     # we must authorize ourselves
@@ -68,35 +65,33 @@ class Client(object):
                 target_uri=f"sip:{invitee}",
                 headers=self._create_headers_for_invite(invitee, subject))) as transaction:
             while True:
-                response = transaction.await_response(timeout=5)
+                response = transaction.await_message(timeout=5)
+                assert isinstance(response, ResponseMessage)
                 print(response)
 
                 if response.status.code == StatusCode.TRYING:
-                    print('Trying')
                     continue
                 elif response.status.code == StatusCode.OK:
-                    print('Ok')
                     break
                 else:
-                    raise RuntimeError(f"Register failed: {response.status}")
+                    raise RuntimeError(f"Invite failed: {response.status}")
 
     @contextmanager
     def _request(self, request: RequestMessage):
-        logger.info('Starting transaction and sending request')
+        logger.info('Sending request')
+        print(request.compose())
 
-        transaction = self._transport.start_transaction(
-            InetAddress(self._local_address.ip, self._generate_port()),
-            self._server_endpoint)
-        try:
-           print(request.compose())
+        if self._transaction is None:
+            self._transaction = self._transport.open(self._local_address, self._server_endpoint, self._on_messages)
 
-           transaction.send(request)
-           yield transaction
-        finally:
-            transaction.close()
+        self._transaction.send(request)
+        self._in_transaction = True
+        yield self._transaction
+        self._in_transaction = False
 
     def close(self):
-        self._transport.close()
+        if self._transaction is not None:
+            self._transport.close()
 
     def _create_request(self,
                         method: Method,
@@ -104,7 +99,7 @@ class Client(object):
                         target_uri: Optional[str] = None,
                         headers: List[Header] = None,
                         body: str = '',
-                        content_type: Optional[str] = None):
+                        content_type: Optional[str] = None) -> RequestMessage:
         if target_uri is None:
             target_uri = f"sip:{self._server_host}"
         if headers is None:
@@ -121,6 +116,19 @@ class Client(object):
             request.add_header(CustomHeader('Content-Type', content_type))
 
         return request
+
+    def _create_response(self,
+                        status: Union[StatusCode, Status],
+                        headers: List[Header] = None) -> ResponseMessage:
+        if headers is None:
+            headers = list()
+
+        response = ResponseMessage(Version.VERSION_2, status, headers)
+        response.add_header(MaxForwards(70), override=False)
+        response.add_header(Expires(1800), override=False)
+        response.add_header(ContentLength(0), override=True)
+
+        return response
 
     def _create_headers_for_register(self, authenticate_header: Optional[WWWAuthenticate] = None):
         return [
@@ -176,10 +184,34 @@ class Client(object):
             )
         ]
 
-    def _on_request(self, client: SipSocket, request: RequestMessage):
-        print('ON REQUEST')
-        print(request.compose())
-        client.close()
+    def _on_messages(self):
+        if self._transaction is None or self._in_transaction:
+            return
+
+        logger.debug('New messages received when not in transaction')
+        msg = self._transaction.await_message()
+        print(msg.compose())
+
+        if msg.type == MessageType.RESPONSE:
+            logger.warning('Got response message to async handler')
+            return
+
+        assert isinstance(msg, RequestMessage)
+        if msg.method == Method.INVITE:
+            self._on_invite_request(msg)
+
+    def _on_invite_request(self, msg: RequestMessage):
+        # report that we are trying
+        self._transaction.send(self._create_response(
+            StatusCode.TRYING,
+            headers=[
+                msg.headers['Via'],
+                msg.headers['From'],
+                msg.headers['To'],
+                msg.headers['CSeq'],
+                msg.headers['Call-ID']
+            ]
+        ))
 
     def _generate_branch(self, method: Method) -> str:
         return f"pyimsbranch-{random.randint(100, 5000)}-{method.name.lower()}"

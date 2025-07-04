@@ -5,9 +5,10 @@ import os
 import time
 import logging
 from abc import ABC, abstractmethod
-from typing import Callable, Dict, List
+from typing import Callable, Dict, List, Tuple
 from collections import deque
 
+from pyims.nio.inet import InetAddress
 
 logger = logging.getLogger('pyims.nio.selector')
 
@@ -216,6 +217,79 @@ class TcpServerRegistration(SelectorRegistration):
     def on_except(self):
         logger.debug('[Reg %d] On Except', self.reg_id)
         self._on_error(None)
+
+    def _on_error(self, e: Exception):
+        logger.debug('[Reg %d] On Error', self.reg_id)
+        try:
+            self._error_callback(e)
+        except:
+            pass
+
+
+class UdpRegistration(SelectorRegistration):
+
+    def __init__(self, skt: socket.socket,
+                 read_callback: Callable[[InetAddress, bytes], None],
+                 error_callback: Callable[[Exception], None]):
+        super().__init__(skt)
+
+        self._read_callback = read_callback
+        self._error_callback = error_callback
+
+        self._send_queue: deque[Tuple[InetAddress, bytes]] = deque()
+
+    def start_read(self):
+        logger.debug('[Reg %d] Starting Read', self.reg_id)
+        self.mark_readable(True, notify=True)
+
+    def enqueue_send(self, dest: InetAddress, data: bytes):
+        with self._lock:
+            logger.debug('[Reg %d] Enqueue new Write (len %d)', self.reg_id, len(data))
+            self._send_queue.append((dest, data))
+            self.mark_writable(True, notify=True)
+
+    def on_read(self):
+        logger.debug('[Reg %d] On Read', self.reg_id)
+
+        try:
+            data, sender = self.socket.recvfrom(1024)
+            logger.info('[Reg %d] Read new data (len %d)', self.reg_id, len(data))
+            self._read_callback(sender, data)
+        except Exception as e:
+            self._on_error(e)
+
+    def on_write(self):
+        logger.debug('[Reg %d] On Write', self.reg_id)
+        if len(self._send_queue) > 0:
+            self._do_write()
+
+    def on_except(self):
+        logger.debug('[Reg %d] On Except', self.reg_id)
+        self._on_error(None)
+
+    def _do_write(self):
+        logger.info('[Reg %d] Flushing from Write Queue', self.reg_id)
+
+        write_count = 10  # to not over saturate on write
+        while len(self._send_queue) > 0 and write_count > 0:
+            write_count -= 1
+
+            dest, data = self._send_queue.popleft()
+            try:
+                logger.debug('[Reg %d] Writing new data (len %d) to socket', self.reg_id, len(data))
+                self.socket.sendto(data, (dest.ip, dest.port))
+            except OSError as e:
+                if e.errno in (11, 115, 15):
+                    # operation not finished, re-add the data to send again
+                    self._send_queue.appendleft((dest, data))
+                    break
+                else:
+                    # errored
+                    self._on_error(e)
+                    break
+
+        if len(self._send_queue) < 1:
+            self.mark_writable(False)
 
     def _on_error(self, e: Exception):
         logger.debug('[Reg %d] On Error', self.reg_id)
