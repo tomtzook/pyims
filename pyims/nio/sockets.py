@@ -47,22 +47,21 @@ class TcpSocket(object):
     def register_to(self, selector: Selector):
         selector.register(self._registration)
 
-    def bind(self, address: str, port: int):
+    def bind(self, address: InetAddress):
         assert self._state == self.STATE_UNCONNECTED, "cannot bind if connected or connecting"
+        logger.info('[Socket, %d] [TCP-C] Binding to %s', self._socket.fileno(), address)
+        self._socket.bind((address.ip, address.port))
+        self._local_address = address
 
-        logger.info('[Socket, %d] [TCP-C] Binding to %s:%d', self._socket.fileno(), address, port)
-        self._socket.bind((address, port))
-        self._local_address = InetAddress(address, port)
-
-    def connect(self, address: str, port: int, callback: Callable[[], None]):
+    def connect(self, address: InetAddress, callback: Callable[[], None]):
         assert self._state == self.STATE_UNCONNECTED, "connection already initiated"
 
-        logger.info('[Socket, %d] [TCP-C] Starting connect to %s:%d', self._socket.fileno(), address, port)
-        errno = self._socket.connect_ex((address, port))
+        logger.info('[Socket, %d] [TCP-C] Starting connect to %s', self._socket.fileno(), address)
+        errno = self._socket.connect_ex((address.ip, address.port))
         if errno != 115:  # E_WOULDBLOCK
             raise OSError(errno)
 
-        self._remote_address = InetAddress(address, port)
+        self._remote_address = address
         self._connect_callback = callback
         self._registration.mark_state_connecting()
 
@@ -121,10 +120,10 @@ class TcpServerSocket(object):
     def register_to(self, selector: Selector):
         selector.register(self._registration)
 
-    def bind(self, address: str, port: int):
-        logger.info('[Socket, %d] [TCP-S] Binding to %s:%d', self._socket.fileno(), address, port)
-        self._socket.bind((address, port))
-        self._local_address = InetAddress(address, port)
+    def bind(self, address: InetAddress):
+        logger.info('[Socket, %d] [TCP-S] Binding to %s', self._socket.fileno(), address)
+        self._socket.bind((address.ip, address.port))
+        self._local_address = address
 
     def listen(self, backlog: int, callback: Callable[[TcpSocket], None]):
         logger.info('[Socket, %d] [TCP-S] Starting listen (backlog %d)', self._socket.fileno(), backlog)
@@ -179,10 +178,10 @@ class UdpSocket(object):
     def register_to(self, selector: Selector):
         selector.register(self._registration)
 
-    def bind(self, address: str, port: int):
-        logger.info('[Socket, %d] [UDP] Binding to %s:%d', self._socket.fileno(), address, port)
-        self._socket.bind((address, port))
-        self._local_address = InetAddress(address, port)
+    def bind(self, address: InetAddress):
+        logger.info('[Socket, %d] [UDP] Binding to %s', self._socket.fileno(), address)
+        self._socket.bind((address.ip, address.port))
+        self._local_address = address
 
     def start_read(self, callback: Callable[[InetAddress, bytes], None]):
         logger.info('[Socket, %d] [UDP] Starting auto read', self._socket.fileno())

@@ -138,11 +138,11 @@ class TcpTransaction(Transaction):
                     remote_address)
 
         skt = TcpSocket()
-        skt.bind(local_address.ip, local_address.port)
+        skt.bind(local_address)
         skt.register_to(selector)
         self._socket = skt
 
-        skt.connect(remote_address.ip, remote_address.port, self._on_connect)
+        skt.connect(remote_address, self._on_connect)
 
     def _on_connect(self):
         with self._lock:
@@ -187,7 +187,7 @@ class UdpTransaction(Transaction):
         self._socket = UdpSocket()
         self._remote_address = remote_address
 
-        self._socket.bind(local_address.ip, local_address.port)
+        self._socket.bind(local_address)
         self._socket.register_to(selector)
         self._socket.start_read(self._on_read_custom)
 
