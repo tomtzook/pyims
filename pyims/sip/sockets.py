@@ -1,20 +1,36 @@
 from collections import deque
 from typing import Optional, List, Tuple, Callable
+from abc import ABC, abstractmethod
 import logging
 import threading
 import io
 
-from pyims.nio.inet import InetAddress
-from pyims.nio.selector import Selector
-from pyims.nio.sockets import TcpSocket
-from pyims.sip.message import Message
-from pyims.sip.parser import parse
+from ..nio.inet import InetAddress
+from ..nio.selector import Selector
+from ..nio.sockets import TcpSocket
+from .message import Message
+from .parser import parse
 
 
 logger = logging.getLogger('pyims.sip.sockets')
 
 
-class SipTcpSocket(object):
+class SipSocket(ABC):
+
+    @abstractmethod
+    def send(self, message: Message):
+        pass
+
+    @abstractmethod
+    def await_message(self, timeout: float) -> Optional[Message]:
+        pass
+
+    @abstractmethod
+    def close(self):
+        pass
+
+
+class SipTcpSocket(SipSocket):
 
     def __init__(self):
         self._lock = threading.RLock()

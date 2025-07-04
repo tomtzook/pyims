@@ -1,8 +1,8 @@
 from abc import ABC, abstractmethod
 from typing import List, Dict, Union
 
-from pyims.sip.headers import Header, Request, Response
-from pyims.sip.sip_types import Version, MessageType, Method, Status, StatusCode
+from .headers import Header, Request, Response
+from .sip_types import Version, MessageType, Method, Status, StatusCode
 
 
 class Message(ABC):

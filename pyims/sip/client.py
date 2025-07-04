@@ -1,13 +1,16 @@
+import logging
 from contextlib import contextmanager
 from typing import List, Optional
 
-from pyims.nio.inet import InetAddress
-from pyims.sip.headers import Header, CSeq, Via, CallID, ContentLength, Expires, MaxForwards, CustomHeader, From, To, \
-    Contact
-from pyims.sip.message import RequestMessage
-from pyims.sip.sip_types import Method, Version, StatusCode
-from pyims.sip.sockets import SipTcpSocket
-from pyims.sip.transport import TcpTransport
+from ..nio.inet import InetAddress
+from .headers import Header, CSeq, Via, CallID, ContentLength, Expires, MaxForwards, CustomHeader, From, To, \
+    Contact, Authorization
+from .message import RequestMessage
+from .sip_types import Method, Version, StatusCode, AuthenticationScheme, AuthenticationAlgorithm
+from .sockets import SipSocket
+from .transport import Transport
+
+logger = logging.getLogger('pyims.sip.client')
 
 
 class Account(object):
@@ -27,27 +30,36 @@ class Account(object):
 class Client(object):
 
     def __init__(self,
+                 transport: Transport,
                  local_address: InetAddress,
                  server_endpoint: InetAddress,
                  account: Account):
+        self._transport = transport
         self._local_address = local_address
         self._server_endpoint = server_endpoint
         self._account = account
         self._server_host = self._generate_ims_host()
-        self._transport = TcpTransport()
 
     def register(self):
         self._transport.start_listen(self._local_address, self._on_request)
 
         with self._request(Method.REGISTER, '', headers=[
-            From(uri=f"sip:{self._account.imsi}@{self._server_host}", tag=''),
+            From(uri=f"sip:{self._account.imsi}@{self._server_host}", tag='4130282085'),
             To(uri=f"sip:{self._account.imsi}@{self._server_host}"),
             CallID(f"1-119985@{self._local_address.ip}"),
             CustomHeader('Supported', 'path'),
             CustomHeader('P-Access-Network-Info', '3GPP-E-UTRAN-FDD; utran-cell-id-3gpp=001010001000019B'),
             CustomHeader('Allow', ','.join([method.value for method in list(Method)])),
-            Via(Version.VERSION_2, 'TCP', self._local_address, branch=''),
-            Contact(self._account.imsi, self._local_address)
+            Via(Version.VERSION_2, 'TCP', self._local_address, branch='z9hG4bK3987742761'),
+            Contact(self._account.imsi, self._local_address),
+            Authorization(
+                scheme=AuthenticationScheme.DIGEST,
+                username=self._account.imsi,
+                uri=f"sip:{self._server_host}",
+                realm=self._server_host,
+                algorithm=AuthenticationAlgorithm.AKA,
+                qop='auth',
+                additional_values=dict(nonce='', response='', cnonce='', nc='00000001'))
         ]) as transaction:
             while True:
                 response = transaction.await_response(timeout=5)
@@ -94,7 +106,7 @@ class Client(object):
 
         return request
 
-    def _on_request(self, client: SipTcpSocket, request: RequestMessage):
+    def _on_request(self, client: SipSocket, request: RequestMessage):
         pass
 
     def _generate_ims_host(self):

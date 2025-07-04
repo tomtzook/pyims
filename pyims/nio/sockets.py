@@ -2,8 +2,8 @@ import socket
 import logging
 from typing import Optional, Callable
 
-from pyims.nio.inet import InetAddress
-from pyims.nio.selector import Selector, TcpRegistration, TcpServerRegistration
+from .inet import InetAddress
+from .selector import Selector, TcpRegistration, TcpServerRegistration
 
 
 logger = logging.getLogger('pyims.nio.sockets')

@@ -1,9 +1,9 @@
 from typing import Dict, List
 
-from pyims.sip.headers import HEADERS, Request, Header, CustomHeader
-from pyims.sip.sip_types import MessageType, METHODS, VERSIONS_BY_STR
-from pyims.sip.headers import Response
-from pyims.sip.message import RequestMessage, ResponseMessage, Message
+from .headers import HEADERS, Request, Header, CustomHeader
+from .sip_types import MessageType, METHODS, VERSIONS_BY_STR
+from .headers import Response
+from .message import RequestMessage, ResponseMessage, Message
 
 
 def _read_headers(data: str):

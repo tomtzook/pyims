@@ -1,12 +1,47 @@
 from typing import Optional, Callable
+from abc import ABC, abstractmethod
 
-from pyims.nio.selector import Selector, SelectorThread
-from pyims.nio.sockets import InetAddress, TcpSocket, TcpServerSocket
-from pyims.sip.message import RequestMessage, ResponseMessage, Message
-from pyims.sip.sockets import AutoConnectSipTcpSocket, SipTcpSocket
+from ..nio.selector import Selector, SelectorThread
+from ..nio.sockets import InetAddress, TcpSocket, TcpServerSocket
+from .message import RequestMessage, ResponseMessage, Message
+from .sockets import AutoConnectSipTcpSocket, SipTcpSocket, SipSocket
 
 
-class TcpTransaction(object):
+class Transaction(ABC):
+
+    @abstractmethod
+    def request(self, msg: RequestMessage, timeout: float = 5) -> ResponseMessage:
+        pass
+
+    @abstractmethod
+    def send(self, msg: Message):
+        pass
+
+    @abstractmethod
+    def await_response(self, timeout: float = 5) -> ResponseMessage:
+        pass
+
+    @abstractmethod
+    def close(self):
+        pass
+
+
+class Transport(ABC):
+
+    @abstractmethod
+    def start_transaction(self, local_address: InetAddress, remote_address: InetAddress) -> Transaction:
+        pass
+
+    @abstractmethod
+    def start_listen(self, local_address: InetAddress, on_request: Callable[[SipSocket, RequestMessage], None]):
+        pass
+
+    @abstractmethod
+    def close(self):
+        pass
+
+
+class TcpTransaction(Transaction):
 
     def __init__(self, selector: Selector, local_address: InetAddress, remote_address: InetAddress):
         self._socket = AutoConnectSipTcpSocket(local_address, remote_address, selector)
@@ -30,7 +65,7 @@ class TcpTransaction(object):
         self._socket.close()
 
 
-class TcpTransport(object):
+class TcpTransport(Transport):
 
     def __init__(self, ):
         super().__init__()
@@ -38,10 +73,10 @@ class TcpTransport(object):
 
         self._server_socket: Optional[TcpServerSocket] = None
 
-    def start_transaction(self, local_address: InetAddress, remote_address: InetAddress):
+    def start_transaction(self, local_address: InetAddress, remote_address: InetAddress) -> Transaction:
         return TcpTransaction(self._selector_thread.selector, local_address, remote_address)
 
-    def start_listen(self, local_address: InetAddress, on_request: Callable[[SipTcpSocket, RequestMessage], None]):
+    def start_listen(self, local_address: InetAddress, on_request: Callable[[SipSocket, RequestMessage], None]):
         if self._server_socket is not None:
             self._server_socket.close()
             self._server_socket = None

@@ -2,10 +2,12 @@ from abc import ABC, abstractmethod
 from typing import Optional, Dict
 import re
 
-from pyims.nio.inet import InetAddress
-from pyims.sip.sip_types import (Method, Version, Status,
-                                 AuthenticationScheme, AuthenticationAlgorithm,
-                                 STATUS_FROM_NUMBER, VERSIONS_BY_STR, AUTH_SCHEME_BY_STR, AUTH_ALGO_BY_STR)
+from ..nio.inet import InetAddress
+from .sip_types import (
+    Method, Version, Status,
+    AuthenticationScheme, AuthenticationAlgorithm,
+    STATUS_FROM_NUMBER, VERSIONS_BY_STR, AUTH_SCHEME_BY_STR, AUTH_ALGO_BY_STR
+)
 
 
 class Header(ABC):
@@ -260,6 +262,59 @@ class Via(Header):
         return res
 
 
+class Authorization(Header):
+    # Authorization: Digest username="[field3]",realm="[field1]",nonce="",algorithm=MD5,uri="sip:ims.voiceblue.com",response="",qop=auth,nc=00000001,cnonce=""
+
+    def __init__(self,
+                 scheme: Optional[AuthenticationScheme] = None,
+                 username: Optional[str] = None,
+                 uri: Optional[str] = None,
+                 realm: Optional[str] = None,
+                 algorithm: Optional[AuthenticationAlgorithm] = None,
+                 qop: Optional[str] = None,
+                 additional_values: Optional[Dict[str, str]] = None):
+        self.scheme: Optional[AuthenticationScheme] = scheme
+        self.username: Optional[str] = username
+        self.uri: Optional[str] = uri
+        self.realm: Optional[str] = realm
+        self.algorithm: Optional[AuthenticationAlgorithm] = algorithm
+        self.qop: Optional[str] = qop
+        self.additional_values: Optional[Dict[str, str]] = additional_values
+
+    @property
+    def name(self) -> str:
+        return 'Authorization'
+
+    def parse_from(self, value: str):
+        value = value.split(' ', 1)
+        self.scheme = AUTH_SCHEME_BY_STR[value[0]]
+
+        values = [line.strip().split('=', 1) for line in value[1].split(', ')]
+        values = {k: v.strip('"') for k, v in values}
+
+        self.username = values.pop('username')
+        self.uri = values.pop('uri')
+        self.realm = values.pop('realm')
+        self.algorithm = AUTH_ALGO_BY_STR[values.pop('algorithm')]
+        self.qop = values.pop('qop')
+
+        self.additional_values = values
+
+    def compose(self) -> str:
+        values = dict()
+        if self.additional_values is not None:
+            values.update(self.additional_values)
+
+        values['username'] = self.username
+        values['uri'] = self.uri
+        values['realm'] = self.realm
+        values['algorithm'] = self.algorithm.value
+        values['qop'] = self.qop
+        values = ','.join([f"{k}=\"{v}\"" for k, v in values.items()])
+
+        return f"{self.scheme.value} {values}"
+
+
 class WWWAuthenticate(Header):
 
     def __init__(self, scheme: Optional[AuthenticationScheme] = None,
@@ -292,7 +347,10 @@ class WWWAuthenticate(Header):
         self.additional_values = values
 
     def compose(self) -> str:
-        values = dict(self.additional_values)
+        values = dict()
+        if self.additional_values is not None:
+            values.update(self.additional_values)
+
         values['nonce'] = self.nonce
         values['realm'] = self.realm
         values['algorithm'] = self.algorithm.value
@@ -302,4 +360,4 @@ class WWWAuthenticate(Header):
         return f"{self.scheme.value} {values}"
 
 
-HEADERS = [CSeq, CallID, From, To, Contact, ContentLength, MaxForwards, Expires, Via, WWWAuthenticate]
+HEADERS = [CSeq, CallID, From, To, Contact, ContentLength, MaxForwards, Expires, Via, Authorization, WWWAuthenticate]
