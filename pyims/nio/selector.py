@@ -120,6 +120,9 @@ class TcpRegistration(SelectorRegistration):
 
     def on_read(self):
         logger.debug('[Reg %d] On Read', self.reg_id)
+        if not self._connected:
+            return
+
         try:
             data = self.socket.recv(1024)
             logger.info('[Reg %d] Read new data (len %d)', self.reg_id, len(data))

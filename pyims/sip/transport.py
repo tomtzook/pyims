@@ -28,6 +28,11 @@ class Transaction(ABC):
 
 class Transport(ABC):
 
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        pass
+
     @abstractmethod
     def start_transaction(self, local_address: InetAddress, remote_address: InetAddress) -> Transaction:
         pass
@@ -72,6 +77,10 @@ class TcpTransport(Transport):
         self._selector_thread = SelectorThread()
 
         self._server_socket: Optional[TcpServerSocket] = None
+
+    @property
+    def name(self) -> str:
+        return 'TCP'
 
     def start_transaction(self, local_address: InetAddress, remote_address: InetAddress) -> Transaction:
         return TcpTransaction(self._selector_thread.selector, local_address, remote_address)

@@ -30,8 +30,10 @@ class StatusCode(enum.Enum):
     TRYING = (100, 'Trying')
     OK = (200, 'OK')
     UNAUTHORIZED = (401, 'Unauthorized')
+    FORBIDDEN = (403, 'Forbidden')
     INTERNAL_SERVER_ERROR = (500, 'Internal Server Error')
-    SERVER_TIMEOUT = ( 504, 'Server Time-out')
+    SERVER_TIMEOUT = (504, 'Server Time-out')
+    DOES_NOT_EXIST_ANYWHERE = (604, 'Does Not Exist Anywhere')
 
 
 class AuthenticationScheme(enum.Enum):
