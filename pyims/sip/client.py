@@ -46,8 +46,7 @@ class Client(object):
                     break
                 elif response.status.code == StatusCode.UNAUTHORIZED:
                     # we must authorize ourselves
-                    assert 'WWW-Authenticate' in response.headers
-                    auth_header = response.headers['WWW-Authenticate']
+                    auth_header = response.header(WWWAuthenticate)
                     assert isinstance(auth_header, WWWAuthenticate)
 
                     transaction.send(
@@ -76,6 +75,10 @@ class Client(object):
                 else:
                     raise RuntimeError(f"Invite failed: {response.status}")
 
+    def close(self):
+        if self._transaction is not None:
+            self._transport.close()
+
     @contextmanager
     def _request(self, request: RequestMessage):
         logger.info('Sending request')
@@ -88,10 +91,6 @@ class Client(object):
         self._in_transaction = True
         yield self._transaction
         self._in_transaction = False
-
-    def close(self):
-        if self._transaction is not None:
-            self._transport.close()
 
     def _create_request(self,
                         method: Method,
@@ -116,6 +115,15 @@ class Client(object):
             request.add_header(CustomHeader('Content-Type', content_type))
 
         return request
+
+    def _respond(self, response: ResponseMessage):
+        logger.info('Sending response')
+        print(response.compose())
+
+        if self._transaction is None:
+            self._transaction = self._transport.open(self._local_address, self._server_endpoint, self._on_messages)
+
+        self._transaction.send(response)
 
     def _create_response(self,
                         status: Union[StatusCode, Status],
@@ -202,14 +210,14 @@ class Client(object):
 
     def _on_invite_request(self, msg: RequestMessage):
         # report that we are trying
-        self._transaction.send(self._create_response(
+        self._respond(self._create_response(
             StatusCode.TRYING,
             headers=[
-                msg.headers['Via'],
-                msg.headers['From'],
-                msg.headers['To'],
-                msg.headers['CSeq'],
-                msg.headers['Call-ID']
+                msg.header(Via),
+                msg.header(From),
+                msg.header(To),
+                msg.header(CSeq),
+                msg.header(CallID)
             ]
         ))
 

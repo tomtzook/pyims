@@ -22,6 +22,12 @@ class Message(ABC):
     def headers(self) -> Dict[str, Header]:
         return self._headers
 
+    def header(self, name: Union[str, type]):
+        if isinstance(name, str):
+            return self._headers[name]
+        else:
+            return self._headers[name.__NAME__]
+
     def add_header(self, header: Header, override: bool = True):
         if header.name in self._headers and not override:
             return

@@ -11,11 +11,11 @@ from .sip_types import (
 
 
 class Header(ABC):
+    __NAME__: Optional[str] = None
 
     @property
-    @abstractmethod
     def name(self) -> str:
-        pass
+        return self.__NAME__
 
     @abstractmethod
     def parse_from(self, value: str):
@@ -94,15 +94,12 @@ class SenderSendeeHeader(Header, ABC):
 
 
 class Request(Header):
+    __NAME__ = 'Request'
 
     def __init__(self, method: Optional[Method] = None, uri: Optional[str] = None, version: Optional[Version] = None):
         self.method: Optional[Method] = method
         self.uri: Optional[str] = uri
         self.version: Optional[Version] = version
-
-    @property
-    def name(self) -> str:
-        return 'Request'
 
     def parse_from(self, value: str):
         value = value.split(" ")
@@ -117,14 +114,11 @@ class Request(Header):
 
 
 class Response(Header):
+    __NAME__ = 'Response'
 
     def __init__(self, version: Optional[Version] = None, status: Optional[Status] = None):
         self.version: Optional[Version] = version
         self.status: Optional[Status] = status
-
-    @property
-    def name(self) -> str:
-        return 'Response'
 
     def parse_from(self, value: str):
         value = value.split(" ", 2)
@@ -137,14 +131,11 @@ class Response(Header):
 
 
 class CSeq(Header):
+    __NAME__ = 'CSeq'
 
     def __init__(self, method: Optional[Method] = None, sequence: Optional[int] = None):
         self.method: Optional[Method] = method
         self.sequence: Optional[int] = sequence
-
-    @property
-    def name(self) -> str:
-        return 'CSeq'
 
     def parse_from(self, value: str):
         value = value.split(" ")
@@ -156,57 +147,40 @@ class CSeq(Header):
 
 
 class CallID(IdentityHeader):
-
-    @property
-    def name(self) -> str:
-        return "Call-ID"
+    __NAME__ = 'Call-ID'
 
 
 class From(SenderSendeeHeader):
-
-    @property
-    def name(self) -> str:
-        return "From"
+    __NAME__ = 'From'
 
 
 class To(SenderSendeeHeader):
-
-    @property
-    def name(self) -> str:
-        return "To"
+    __NAME__ = 'To'
 
 
 class ContentLength(IntHeader):
+    __NAME__ = 'Content-Length'
 
     def __init__(self, value: Optional[int] = None):
         super().__init__(value)
-
-    @property
-    def name(self) -> str:
-        return "Content-Length"
 
 
 class MaxForwards(IntHeader):
+    __NAME__ = 'Max-Forwards'
 
     def __init__(self, value: Optional[int] = None):
         super().__init__(value)
-
-    @property
-    def name(self) -> str:
-        return "Max-Forwards"
 
 
 class Expires(IntHeader):
+    __NAME__ = 'Expires'
 
     def __init__(self, value: Optional[int] = None):
         super().__init__(value)
 
-    @property
-    def name(self) -> str:
-        return "Expires"
-
 
 class Contact(Header):
+    __NAME__ = 'Contact'
 
     def __init__(self, address: Optional[InetAddress] = None,
                  internal_tags: Optional[Dict[str, str]] = None,
@@ -214,10 +188,6 @@ class Contact(Header):
         self.address = address
         self.internal_tags = internal_tags
         self.external_tags = external_tags
-
-    @property
-    def name(self) -> str:
-        return 'Contact'
 
     def parse_from(self, value: str):
         match = re.search(r"^<sip:(.+):(\d+)(?:;(.*))?>(?:;(.*))?$", value)
@@ -251,6 +221,7 @@ class Contact(Header):
 
 
 class Via(Header):
+    __NAME__ = 'Via'
 
     def __init__(self, version: Optional[Version] = None,
                  transport: Optional[str] = None,
@@ -262,10 +233,6 @@ class Via(Header):
         self.address: Optional[InetAddress] = address
         self.rport: Optional[str] = rport
         self.branch: Optional[str] = branch
-
-    @property
-    def name(self) -> str:
-        return 'Via'
 
     def parse_from(self, value: str):
         match = re.search(r"^(SIP/\d+\.\d+)/(\w+)\s(.+)(?:;rport=(.+))?(?:;branch=(.+))?$", value)
@@ -286,6 +253,7 @@ class Via(Header):
 
 
 class Authorization(Header):
+    __NAME__ = 'Authorization'
 
     def __init__(self,
                  scheme: Optional[AuthenticationScheme] = None,
@@ -310,10 +278,6 @@ class Authorization(Header):
         self.nonce: Optional[str] = nonce
         self.response: Optional[str] = response
         self.additional_values: Optional[Dict[str, str]] = additional_values
-
-    @property
-    def name(self) -> str:
-        return 'Authorization'
 
     def parse_from(self, value: str):
         value = value.split(' ', 1)
@@ -363,6 +327,7 @@ class Authorization(Header):
 
 
 class WWWAuthenticate(Header):
+    __NAME__ = 'WWW-Authenticate'
 
     def __init__(self, scheme: Optional[AuthenticationScheme] = None,
                  nonce: Optional[str] = None, realm: Optional[str] = None,
@@ -374,10 +339,6 @@ class WWWAuthenticate(Header):
         self.algorithm: Optional[AuthenticationAlgorithm] = algorithm
         self.qop: Optional[str] = qop
         self.additional_values: Optional[Dict[str, str]] = additional_values
-
-    @property
-    def name(self) -> str:
-        return 'WWW-Authenticate'
 
     def parse_from(self, value: str):
         value = value.split(' ', 1)
