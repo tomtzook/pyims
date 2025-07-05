@@ -1,14 +1,15 @@
 import socket
 import logging
-from typing import Optional, Callable
+from typing import Optional, Callable, Tuple
 
 from .inet import InetAddress
 from .selector import Selector, TcpRegistration, TcpServerRegistration, UdpRegistration
+from .streams import ReadableStream, WritableStream
 
 logger = logging.getLogger('pyims.nio.sockets')
 
 
-class TcpSocket(object):
+class TcpSocket(ReadableStream[bytes], WritableStream[bytes]):
     STATE_UNCONNECTED = 0
     STATE_CONNECTING = 1
     STATE_CONNECTED = 2
@@ -65,7 +66,7 @@ class TcpSocket(object):
         self._connect_callback = callback
         self._registration.mark_state_connecting()
 
-    def start_read(self, callback: Callable[[bytes], None]):
+    def start_read(self, callback: Callable[[Optional[bytes]], None]):
         assert self._state == self.STATE_CONNECTED, "cannot read until connected"
         logger.info('[Socket, %d] [TCP-C] Starting auto read', self._socket.fileno())
         self._read_callback = callback
@@ -156,7 +157,7 @@ class TcpServerSocket(object):
         self.close()
 
 
-class UdpSocket(object):
+class UdpSocket(ReadableStream[Tuple[InetAddress, bytes]], WritableStream[Tuple[InetAddress, bytes]]):
 
     def __init__(self):
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
@@ -183,12 +184,13 @@ class UdpSocket(object):
         self._socket.bind((address.ip, address.port))
         self._local_address = address
 
-    def start_read(self, callback: Callable[[InetAddress, bytes], None]):
+    def start_read(self, callback: Callable[[Optional[Tuple[InetAddress, bytes]]], None]):
         logger.info('[Socket, %d] [UDP] Starting auto read', self._socket.fileno())
         self._read_callback = callback
         self._registration.start_read()
 
-    def write(self, dest: InetAddress, data: bytes):
+    def write(self, data_p: Tuple[InetAddress, bytes]):
+        dest, data = data_p
         logger.info('[Socket, %d] [UDP] Writing data (dest %s, len %d)', self._socket.fileno(), dest, len(data))
         self._registration.enqueue_send(dest, data)
 
@@ -199,7 +201,7 @@ class UdpSocket(object):
     def _on_read(self, sender: InetAddress, data: bytes):
         logger.debug('[Socket, %d] [UDP] On Read data (sender %s, len %d)', self._socket.fileno(), sender, len(data))
         if self._read_callback is not None:
-            self._read_callback(sender, data)
+            self._read_callback((sender, data))
 
     def _on_error(self, ex: Exception):
         logger.exception('[Socket, %d] [UDP] On Error', self._socket.fileno(), exc_info=ex)

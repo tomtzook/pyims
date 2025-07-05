@@ -43,7 +43,11 @@ class Transaction(ABC):
     def close(self):
         pass
 
-    def _on_read(self, data: bytes):
+    def _on_read(self, data: Optional[bytes]):
+        if data is None:
+            # TODO: END OF STREAM
+            return
+
         read_callback = None
         has_new_messages = False
         with self._lock:
@@ -198,7 +202,7 @@ class UdpTransaction(Transaction):
             if self._socket is None:
                 return
 
-            self._socket.write(self._remote_address, message.compose().encode("utf-8"))
+            self._socket.write((self._remote_address, message.compose().encode("utf-8")))
 
     def close(self):
         with self._lock:
@@ -206,8 +210,8 @@ class UdpTransaction(Transaction):
                 self._socket.close()
                 self._socket = None
 
-    def _on_read_custom(self, sender: InetAddress, data: bytes):
-        self._on_read(data)
+    def _on_read_custom(self, data: Optional[Tuple[InetAddress, bytes]]):
+        self._on_read(data[1] if data is not None else None)
 
 
 class UdpTransport(Transport):

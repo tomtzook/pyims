@@ -1,7 +1,7 @@
 import logging
 import random
 from contextlib import contextmanager
-from typing import List, Optional, Union, Tuple
+from typing import List, Optional, Union, Tuple, Callable
 
 from .auth import Account, create_auth_header
 from .headers import Header, CSeq, Via, CallID, ContentLength, Expires, MaxForwards, CustomHeader, From, To, \
@@ -33,76 +33,101 @@ class Client(object):
         self._server_host = self._generate_ims_host()
         self._transaction: Optional[Transaction] = None
         self._in_transaction: bool = False
+        self._is_registered: bool = False
 
     def register(self):
+        if self._is_registered:
+            return
+
         logger.info('Client starting registration with network')
 
-        with self._request(self._create_request(
-                Method.REGISTER,
-                headers=self._create_headers_for_register()
-        )) as transaction:
-            while True:
-                response = transaction.await_message(timeout=5)
-                assert isinstance(response, ResponseMessage)
-                print(response)
+        def _on_response(transaction: Transaction, response: ResponseMessage) -> bool:
+            if response.status.code == StatusCode.TRYING:
+                return False
+            elif response.status.code == StatusCode.OK:
+                self._is_registered = True
+                return True
+            elif response.status.code == StatusCode.UNAUTHORIZED:
+                # we must authorize ourselves
+                auth_header = response.header(WWWAuthenticate)
+                assert isinstance(auth_header, WWWAuthenticate)
 
-                if response.status.code == StatusCode.TRYING:
-                    continue
-                elif response.status.code == StatusCode.OK:
-                    break
-                elif response.status.code == StatusCode.UNAUTHORIZED:
-                    # we must authorize ourselves
-                    auth_header = response.header(WWWAuthenticate)
-                    assert isinstance(auth_header, WWWAuthenticate)
+                transaction.send(self._create_request_register(auth_header))
+                return False
+            else:
+                raise RuntimeError(f"Register failed: {response.status}")
 
-                    transaction.send(
-                        self._create_request(
-                            Method.REGISTER,
-                            headers=self._create_headers_for_register(auth_header))
-                    )
-                    continue
-                else:
-                    raise RuntimeError(f"Register failed: {response.status}")
+        self._do_transaction(self._create_request_register(), _on_response)
+
+    def bye(self):
+        if not self._is_registered:
+            return
+
+        def _on_response(transaction: Transaction, response: ResponseMessage) -> bool:
+            if response.status.code == StatusCode.TRYING:
+                return False
+            elif response.status.code == StatusCode.OK:
+                self._is_registered = False
+                return True
+            else:
+                raise RuntimeError(f"Register failed: {response.status}")
+
+        self._do_transaction(self._create_request_bye(), _on_response)
 
     def invite(self, invitee: str, subject: str):
-        body = SdpMessage(fields=[
-            sdp_fields.Version(0),
-            sdp_fields.Originator('-', '1', '1', NetworkType.IN, AddressType.IPv4, '172.22.0.1'),
-            sdp_fields.SessionName('pyims Call'),
-            sdp_fields.ConnectionInformation(NetworkType.IN, AddressType.IPv4, '172.22.0.1'),
-            sdp_fields.MediaDescription(MediaType.AUDIO, 6000, MediaProtocol.RTP_AVP),
-            sdp_fields.BandwidthInformation('AS', 84),
-            sdp_fields.BandwidthInformation('TIAS', 64000),
-        ] + sdp_fields.AttributeField.attributes_to_fields(attributes=[
-            sdp_attributes.RtpMap(MediaFormat.PCMU, 'PCMU', 8000),
-            sdp_attributes.RtpMap(MediaFormat.PCMA, 'PCMA', 8000),
-            sdp_attributes.RtpMap(MediaFormat.EVENT, 'telephony-event', 8000),
-            sdp_attributes.Fmtp(MediaFormat.EVENT, ['0-16']),
-            sdp_attributes.Rtcp(6000),
-            sdp_attributes.SendRecv()
-        ]))
+        body = SdpMessage(
+            fields=[
+                sdp_fields.Version(0),
+                sdp_fields.Originator('-', '1', '1', NetworkType.IN, AddressType.IPv4, '172.22.0.1'),
+                sdp_fields.SessionName('pyims Call'),
+                sdp_fields.ConnectionInformation(NetworkType.IN, AddressType.IPv4, '172.22.0.1'),
+                sdp_fields.MediaDescription(MediaType.AUDIO, 6000, MediaProtocol.RTP_AVP),
+                sdp_fields.BandwidthInformation('AS', 84),
+                sdp_fields.BandwidthInformation('TIAS', 64000),
+            ],
+            attributes=[
+                sdp_attributes.RtpMap(MediaFormat.PCMU, 'PCMU', 8000),
+                sdp_attributes.RtpMap(MediaFormat.PCMA, 'PCMA', 8000),
+                sdp_attributes.RtpMap(MediaFormat.EVENT, 'telephony-event', 8000),
+                sdp_attributes.Fmtp(MediaFormat.EVENT, ['0-16']),
+                sdp_attributes.Rtcp(6000),
+                sdp_attributes.SendRecv()
+            ])
 
-        with self._request(self._create_request(
-            Method.INVITE,
-            target_uri=f"sip:{invitee}",
-            headers=self._create_headers_for_invite(invitee, subject),
-            body=body.compose()
-        )) as transaction:
-            while True:
-                response = transaction.await_message(timeout=5)
-                assert isinstance(response, ResponseMessage)
-                print(response)
+        def _on_response(transaction: Transaction, response: ResponseMessage) -> bool:
+            if response.status.code == StatusCode.TRYING:
+                return False
+            elif response.status.code == StatusCode.OK:
+                return True
+            else:
+                raise RuntimeError(f"Invite failed: {response.status}")
 
-                if response.status.code == StatusCode.TRYING:
-                    continue
-                elif response.status.code == StatusCode.OK:
-                    break
-                else:
-                    raise RuntimeError(f"Invite failed: {response.status}")
+        self._do_transaction(self._create_request_invite(invitee, subject, body), _on_response)
 
     def close(self):
         if self._transaction is not None:
+            if self._is_registered:
+                try:
+                    self.bye()
+                except:
+                    # we don't care really if this fails
+                    pass
+
             self._transport.close()
+
+        self._transaction = None
+        self._is_registered = False
+        self._in_transaction = False
+
+    def _do_transaction(self, request: RequestMessage, on_response: Callable[[Transaction, ResponseMessage], bool], timeout: int = 5):
+        with self._request(request) as transaction:
+            while True:
+                response = transaction.await_message(timeout=timeout)
+                assert isinstance(response, ResponseMessage)
+                print(response)
+
+                if on_response(transaction, response):
+                    break
 
     @contextmanager
     def _request(self, request: RequestMessage):
@@ -116,6 +141,73 @@ class Client(object):
         self._in_transaction = True
         yield self._transaction
         self._in_transaction = False
+
+    def _respond(self, response: ResponseMessage):
+        logger.info('Sending response')
+        print(response.compose())
+
+        if self._transaction is None:
+            self._transaction = self._transport.open(self._local_address, self._server_endpoint, self._on_messages)
+
+        self._transaction.send(response)
+
+    def _create_request_register(self, authenticate_header: Optional[WWWAuthenticate] = None) -> RequestMessage:
+        return self._create_request(
+            Method.REGISTER,
+            headers=[
+                self._generate_from(*self._my_credentials, tag='1'),
+                self._generate_to(*self._my_credentials),
+                CallID(f"1-119985@{self._local_address.ip}"),
+                CustomHeader('Supported', 'path'),
+                CustomHeader(
+                    'P-Access-Network-Info',
+                    '3GPP-E-UTRAN-FDD; utran-cell-id-3gpp=001010001000019B'
+                ),
+                CustomHeader(
+                    'Allow',
+                    ','.join([method.value for method in list(Method)])
+                ),
+                self._generate_our_contact(),
+                create_auth_header(Method.REGISTER, self._account, self._server_host, authenticate_header)
+            ]
+        )
+
+    def _create_request_invite(self, invitee: str, subject: str, sdp: SdpMessage) -> RequestMessage:
+        return self._create_request(
+            Method.INVITE,
+            target_uri=f"sip:{invitee}",
+            headers=[
+                self._generate_from(*self._my_credentials, tag='1'),
+                To(uri=f"sip:{invitee}"),
+                CallID(f"1-119985@{self._local_address.ip}"),
+                CustomHeader('Supported', 'path'),
+                CustomHeader(
+                    'P-Access-Network-Info',
+                    '3GPP-E-UTRAN-FDD; utran-cell-id-3gpp=001010001000019B'
+                ),
+                CustomHeader('Subject', subject),
+                self._generate_our_contact()
+            ],
+            body=sdp.compose(),
+            content_type='application/sdp'
+        )
+
+    def _create_request_bye(self) -> RequestMessage:
+        return self._create_request(
+            Method.BYE,
+            seq_num=2,
+            target_uri=f"sip:{self._account.imsi}@{self._server_host}:{self._local_address.port}",
+            headers=[
+                self._generate_from(*self._my_credentials, tag='1'),
+                self._generate_to(*self._my_credentials),
+                CallID(f"1-119985@{self._local_address.ip}"),
+                CustomHeader(
+                    'P-Access-Network-Info',
+                    '3GPP-E-UTRAN-FDD; utran-cell-id-3gpp=001010001000019B'
+                ),
+                self._generate_our_contact()
+            ]
+        )
 
     def _create_request(self,
                         method: Method,
@@ -141,15 +233,6 @@ class Client(object):
 
         return request
 
-    def _respond(self, response: ResponseMessage):
-        logger.info('Sending response')
-        print(response.compose())
-
-        if self._transaction is None:
-            self._transaction = self._transport.open(self._local_address, self._server_endpoint, self._on_messages)
-
-        self._transaction.send(response)
-
     def _create_response(self,
                         status: Union[StatusCode, Status],
                         headers: List[Header] = None) -> ResponseMessage:
@@ -162,38 +245,6 @@ class Client(object):
         response.add_header(ContentLength(0), override=True)
 
         return response
-
-    def _create_headers_for_register(self, authenticate_header: Optional[WWWAuthenticate] = None):
-        return [
-            self._generate_from(*self._my_credentials, tag='1'),
-            self._generate_to(*self._my_credentials),
-            CallID(f"1-119985@{self._local_address.ip}"),
-            CustomHeader('Supported', 'path'),
-            CustomHeader(
-                'P-Access-Network-Info',
-                '3GPP-E-UTRAN-FDD; utran-cell-id-3gpp=001010001000019B'
-            ),
-            CustomHeader(
-                'Allow',
-                ','.join([method.value for method in list(Method)])
-            ),
-            self._generate_our_contact(),
-            create_auth_header(Method.REGISTER, self._account, self._server_host, authenticate_header)
-        ]
-
-    def _create_headers_for_invite(self, invitee: str, subject: str):
-        return [
-            self._generate_from(*self._my_credentials, tag='1'),
-            To(uri=f"sip:{invitee}"),
-            CallID(f"1-119985@{self._local_address.ip}"),
-            CustomHeader('Supported', 'path'),
-            CustomHeader(
-                'P-Access-Network-Info',
-                '3GPP-E-UTRAN-FDD; utran-cell-id-3gpp=001010001000019B'
-            ),
-            CustomHeader('Subject', subject),
-            self._generate_our_contact()
-        ]
 
     def _on_messages(self):
         if self._transaction is None or self._in_transaction:

@@ -15,8 +15,8 @@ logger = logging.getLogger('pyims.nio.selector')
 
 class SelectorRegistration(ABC):
 
-    def __init__(self, skt: socket.socket):
-        self._skt = skt
+    def __init__(self, resource):
+        self._resource = resource
         self._lock = None
         self._readable = False
         self._writable = False
@@ -24,11 +24,11 @@ class SelectorRegistration(ABC):
 
     @property
     def reg_id(self):
-        return self._skt.fileno()
+        return self._resource.fileno()
 
     @property
-    def socket(self) -> socket.socket:
-        return self._skt
+    def resource(self):
+        return self._resource
 
     @property
     def readable(self) -> bool:
@@ -85,12 +85,12 @@ class SelectorRegistration(ABC):
 
 class TcpRegistration(SelectorRegistration):
 
-    def __init__(self, skt: socket.socket,
+    def __init__(self, resource: socket.socket,
                  read_callback: Callable[[bytes], None],
                  connect_callback: Callable[[], None],
                  error_callback: Callable[[Exception], None],
                  already_connected: bool = False):
-        super().__init__(skt)
+        super().__init__(resource)
 
         self._read_callback = read_callback
         self._connect_callback = connect_callback
@@ -125,7 +125,7 @@ class TcpRegistration(SelectorRegistration):
             return
 
         try:
-            data = self.socket.recv(1024)
+            data = self.resource.recv(1024)
             logger.info('[Reg %d] Read new data (len %d)', self.reg_id, len(data))
             self._read_callback(data)
         except Exception as e:
@@ -143,7 +143,7 @@ class TcpRegistration(SelectorRegistration):
 
     def on_except(self):
         logger.debug('[Reg %d] On Except', self.reg_id)
-        self._on_error(None)
+        self._on_error(None)  # TODO: GET ERROR
 
     def _do_write(self):
         logger.info('[Reg %d] Flushing from Write Queue', self.reg_id)
@@ -155,7 +155,7 @@ class TcpRegistration(SelectorRegistration):
             data = self._send_queue.popleft()
             try:
                 logger.debug('[Reg %d] Writing new data (len %d) to socket', self.reg_id, len(data))
-                self.socket.send(data)
+                self.resource.send(data)
             except OSError as e:
                 if e.errno in (11, 115, 15):
                     # operation not finished, re-add the data to send again
@@ -191,10 +191,10 @@ class TcpRegistration(SelectorRegistration):
 
 class TcpServerRegistration(SelectorRegistration):
 
-    def __init__(self, skt: socket.socket,
+    def __init__(self, resource: socket.socket,
                  connect_callback: Callable[[], None],
                  error_callback: Callable[[Exception], None]):
-        super().__init__(skt)
+        super().__init__(resource)
 
         self._connect_callback = connect_callback
         self._error_callback = error_callback
@@ -228,10 +228,10 @@ class TcpServerRegistration(SelectorRegistration):
 
 class UdpRegistration(SelectorRegistration):
 
-    def __init__(self, skt: socket.socket,
+    def __init__(self, resource: socket.socket,
                  read_callback: Callable[[InetAddress, bytes], None],
                  error_callback: Callable[[Exception], None]):
-        super().__init__(skt)
+        super().__init__(resource)
 
         self._read_callback = read_callback
         self._error_callback = error_callback
@@ -252,7 +252,7 @@ class UdpRegistration(SelectorRegistration):
         logger.debug('[Reg %d] On Read', self.reg_id)
 
         try:
-            data, sender = self.socket.recvfrom(1024)
+            data, sender = self.resource.recvfrom(1024)
             logger.info('[Reg %d] Read new data (len %d)', self.reg_id, len(data))
             self._read_callback(sender, data)
         except Exception as e:
@@ -277,7 +277,7 @@ class UdpRegistration(SelectorRegistration):
             dest, data = self._send_queue.popleft()
             try:
                 logger.debug('[Reg %d] Writing new data (len %d) to socket', self.reg_id, len(data))
-                self.socket.sendto(data, (dest.ip, dest.port))
+                self.resource.sendto(data, (dest.ip, dest.port))
             except OSError as e:
                 if e.errno in (11, 115, 15):
                     # operation not finished, re-add the data to send again
@@ -302,11 +302,11 @@ class UdpRegistration(SelectorRegistration):
 class Selector(object):
 
     def __init__(self):
-        self._sockets: Dict[int, SelectorRegistration] = dict()
+        self._registered: Dict[int, SelectorRegistration] = dict()
 
-        self._readable_skt: List = []
-        self._writable_skt: List = []
-        self._exception_skt: List = []
+        self._readable_lst: List = []
+        self._writable_lst: List = []
+        self._exception_lst: List = []
         self._lock = threading.RLock()
         self._eventfd = os.eventfd(0, os.EFD_NONBLOCK)
         self._stop_run = False
@@ -315,7 +315,7 @@ class Selector(object):
         with self._lock:
             skt_id = registration.reg_id
             logger.debug('[Selector] Registering New %d', skt_id)
-            self._sockets[skt_id] = registration
+            self._registered[skt_id] = registration
 
             registration.attach(self._on_reg_config_changed, self._lock)
             self._signal_run()
@@ -333,9 +333,9 @@ class Selector(object):
 
                 self._recompute_select_lists()
 
-            logger.debug('[Selector] Entering select (r=%d, w=%d, e=%d)', len(self._readable_skt),
-                         len(self._writable_skt), len(self._exception_skt))
-            readable, writable, exceptional = select.select(self._readable_skt, self._writable_skt, self._exception_skt,
+            logger.debug('[Selector] Entering select (r=%d, w=%d, e=%d)', len(self._readable_lst),
+                         len(self._writable_lst), len(self._exception_lst))
+            readable, writable, exceptional = select.select(self._readable_lst, self._writable_lst, self._exception_lst,
                                                             timeout)
             logger.debug('[Selector] Exiting select (r=%d, w=%d, e=%d)', len(readable), len(writable), len(exceptional))
 
@@ -343,20 +343,20 @@ class Selector(object):
                 if self._stop_run:
                     return
 
-                for skt_id in exceptional:
-                    if skt_id in self._sockets:
-                        self._sockets[skt_id].on_except()
+                for res_id in exceptional:
+                    if res_id in self._registered:
+                        self._registered[res_id].on_except()
 
-                for skt_id in readable:
-                    if skt_id in self._sockets:
-                        self._sockets[skt_id].on_read()
-                    elif skt_id == self._eventfd:
+                for res_id in readable:
+                    if res_id in self._registered:
+                        self._registered[res_id].on_read()
+                    elif res_id == self._eventfd:
                         logger.debug('[Selector] Run Event Signalled')
                         os.eventfd_read(self._eventfd)
 
-                for skt_id in writable:
-                    if skt_id in self._sockets:
-                        self._sockets[skt_id].on_write()
+                for res_id in writable:
+                    if res_id in self._registered:
+                        self._registered[res_id].on_write()
         except:
             logger.exception('[Selector] Error in select run')
             time.sleep(timeout)  # wait and try again
@@ -366,30 +366,30 @@ class Selector(object):
             self.run(timeout)
 
     def _recompute_select_lists(self):
-        self._readable_skt.clear()
-        self._writable_skt.clear()
-        self._exception_skt.clear()
+        self._readable_lst.clear()
+        self._writable_lst.clear()
+        self._exception_lst.clear()
 
-        self._readable_skt.append(self._eventfd)
+        self._readable_lst.append(self._eventfd)
 
         to_remove = []
 
-        for reg_id, reg in self._sockets.items():
-            if reg.socket.fileno() < 0:
+        for reg_id, reg in self._registered.items():
+            if reg.resource.fileno() < 0:
                 to_remove.append(reg_id)
                 continue
 
             if reg.readable:
-                self._readable_skt.append(reg.socket.fileno())
+                self._readable_lst.append(reg.resource.fileno())
             if reg.writable:
-                self._writable_skt.append(reg.socket.fileno())
+                self._writable_lst.append(reg.resource.fileno())
 
             # everyone in exception
-            self._exception_skt.append(reg.socket.fileno())
+            self._exception_lst.append(reg.resource.fileno())
 
         for reg_id in to_remove:
             logger.info('[Selector] Removing registration %d because fd closed', reg_id)
-            self._sockets.pop(reg_id)
+            self._registered.pop(reg_id)
 
     def _on_reg_config_changed(self):
         with self._lock:
