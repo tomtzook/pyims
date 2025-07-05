@@ -1,13 +1,13 @@
 from abc import ABC, abstractmethod
 from typing import List, Dict, Union
 
-from .headers import Header, Request, Response
+from .headers import SipHeader, Request, Response
 from .sip_types import Version, MessageType, Method, Status, StatusCode
 
 
 class Message(ABC):
 
-    def __init__(self, version: Version, headers: List[Header] = None, body: str = ''):
+    def __init__(self, version: Version, headers: List[SipHeader] = None, body: str = ''):
         headers = headers if headers else list()
 
         self._version = version
@@ -19,16 +19,16 @@ class Message(ABC):
         return self._version
 
     @property
-    def headers(self) -> Dict[str, Header]:
+    def headers(self) -> Dict[str, SipHeader]:
         return self._headers
 
-    def header(self, name: Union[str, type]):
+    def header(self, name: Union[str, type]) -> SipHeader:
         if isinstance(name, str):
             return self._headers[name]
         else:
             return self._headers[name.__NAME__]
 
-    def add_header(self, header: Header, override: bool = True):
+    def add_header(self, header: SipHeader, override: bool = True):
         if header.name in self._headers and not override:
             return
         self._headers[header.name] = header
@@ -55,7 +55,7 @@ class Message(ABC):
 
 class RequestMessage(Message):
 
-    def __init__(self, version: Version, method: Method, server_uri: str, headers: List[Header] = None, body: str = ''):
+    def __init__(self, version: Version, method: Method, server_uri: str, headers: List[SipHeader] = None, body: str = ''):
         super().__init__(version, headers, body)
         self._method = method
         self._server_uri = server_uri
@@ -84,7 +84,7 @@ class RequestMessage(Message):
 
 class ResponseMessage(Message):
 
-    def __init__(self, version: Version, status: Union[StatusCode, Status], headers: List[Header] = None, body: str = ''):
+    def __init__(self, version: Version, status: Union[StatusCode, Status], headers: List[SipHeader] = None, body: str = ''):
         super().__init__(version, headers, body)
         self._status = status if isinstance(status, Status) else Status(status, status.value[1])
 

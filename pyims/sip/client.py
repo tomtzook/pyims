@@ -1,7 +1,7 @@
 import logging
 import random
 from contextlib import contextmanager
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Tuple
 
 from .auth import Account, create_auth_header
 from .headers import Header, CSeq, Via, CallID, ContentLength, Expires, MaxForwards, CustomHeader, From, To, \
@@ -9,6 +9,10 @@ from .headers import Header, CSeq, Via, CallID, ContentLength, Expires, MaxForwa
 from .message import RequestMessage, ResponseMessage
 from .sip_types import Method, Version, StatusCode, MessageType, Status
 from .transport import Transport, Transaction
+from ..sdp import fields as sdp_fields
+from ..sdp.sdp_types import NetworkType, AddressType, MediaType, MediaProtocol
+from ..sdp.parser import parse_sdp
+from ..sdp.message import SdpMessage
 from ..nio.inet import InetAddress
 
 logger = logging.getLogger('pyims.sip.client')
@@ -34,9 +38,10 @@ class Client(object):
 
         with self._request(self._create_request(
                 Method.REGISTER,
-                headers=self._create_headers_for_register())) as transaction:
+                headers=self._create_headers_for_register()
+        )) as transaction:
             while True:
-                response = transaction.await_message(timeout=10)
+                response = transaction.await_message(timeout=5)
                 assert isinstance(response, ResponseMessage)
                 print(response)
 
@@ -59,10 +64,20 @@ class Client(object):
                     raise RuntimeError(f"Register failed: {response.status}")
 
     def invite(self, invitee: str, subject: str):
+        body = SdpMessage(fields=[
+            sdp_fields.Version(0),
+            sdp_fields.Originator('-', '1', '1', NetworkType.IN, AddressType.IPv4, '172.22.0.1'),
+            sdp_fields.SessionName('pyims Call'),
+            sdp_fields.ConnectionInformation(NetworkType.IN, AddressType.IPv4, '172.22.0.1'),
+            sdp_fields.MediaDescription(MediaType.AUDIO, 6000, MediaProtocol.RTP_AVP)
+        ])
+
         with self._request(self._create_request(
-                Method.INVITE,
-                target_uri=f"sip:{invitee}",
-                headers=self._create_headers_for_invite(invitee, subject))) as transaction:
+            Method.INVITE,
+            target_uri=f"sip:{invitee}",
+            headers=self._create_headers_for_invite(invitee, subject),
+            body=body.compose()
+        )) as transaction:
             while True:
                 response = transaction.await_message(timeout=5)
                 assert isinstance(response, ResponseMessage)
@@ -140,11 +155,8 @@ class Client(object):
 
     def _create_headers_for_register(self, authenticate_header: Optional[WWWAuthenticate] = None):
         return [
-            From(
-                uri=f"sip:{self._account.imsi}@{self._server_host}",
-                tag='1'
-            ),
-            To(uri=f"sip:{self._account.imsi}@{self._server_host}"),
+            self._generate_from(*self._my_credentials, tag='1'),
+            self._generate_to(*self._my_credentials),
             CallID(f"1-119985@{self._local_address.ip}"),
             CustomHeader('Supported', 'path'),
             CustomHeader(
@@ -155,24 +167,13 @@ class Client(object):
                 'Allow',
                 ','.join([method.value for method in list(Method)])
             ),
-            Contact(
-                self._local_address,
-                external_tags={
-                    '+sip.instance': '"<urn:gsma:imei:35622410-483840-0>"',
-                    'q': '1.0',
-                    '+g.3gpp.icsi-ref': '"urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel"',
-                    '+g.3gpp.smsip': None
-                }
-            ),
+            self._generate_our_contact(),
             create_auth_header(Method.REGISTER, self._account, self._server_host, authenticate_header)
         ]
 
     def _create_headers_for_invite(self, invitee: str, subject: str):
         return [
-            From(
-                uri=f"sip:{self._account.imsi}@{self._server_host}",
-                tag='1'
-            ),
+            self._generate_from(*self._my_credentials, tag='1'),
             To(uri=f"sip:{invitee}"),
             CallID(f"1-119985@{self._local_address.ip}"),
             CustomHeader('Supported', 'path'),
@@ -181,15 +182,7 @@ class Client(object):
                 '3GPP-E-UTRAN-FDD; utran-cell-id-3gpp=001010001000019B'
             ),
             CustomHeader('Subject', subject),
-            Contact(
-                self._local_address,
-                external_tags={
-                    '+sip.instance': '"<urn:gsma:imei:35622410-483840-0>"',
-                    'q': '1.0',
-                    '+g.3gpp.icsi-ref': '"urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel"',
-                    '+g.3gpp.smsip': None
-                }
-            )
+            self._generate_our_contact()
         ]
 
     def _on_messages(self):
@@ -209,6 +202,9 @@ class Client(object):
             self._on_invite_request(msg)
 
     def _on_invite_request(self, msg: RequestMessage):
+        sdp_message = sdp.parse_sdp(msg.body)
+        print(sdp_message)
+
         # report that we are trying
         self._respond(self._create_response(
             StatusCode.TRYING,
@@ -220,6 +216,42 @@ class Client(object):
                 msg.header(CallID)
             ]
         ))
+        # todo: start setup
+        local_tag = '2'
+
+        # report that we are ringing
+        self._respond(self._create_response(
+            StatusCode.RINGING,
+            headers=[
+                msg.header(Via),
+                msg.header(From),
+                self._generate_to(*self._my_credentials, tag=local_tag),
+                msg.header(CSeq),
+                msg.header(CallID),
+                self._generate_our_contact()
+            ]
+        ))
+        # todo: ring user
+
+    def _generate_from(self, username: str, server: str, tag: Optional[str] = None) -> From:
+        return From(uri=f"sip:{username}@{server}", tag=tag)
+
+    def _generate_to(self, username: str, server: str, tag: Optional[str] = None) -> To:
+        return To(uri=f"sip:{username}@{server}", tag=tag)
+
+    def _generate_our_contact(self) -> Contact:
+        return Contact(
+            self._local_address,
+            internal_tags={
+                'transport': self._transport.name
+            },
+            external_tags={
+                '+sip.instance': '"<urn:gsma:imei:35622410-483840-0>"',
+                'q': '1.0',
+                '+g.3gpp.icsi-ref': '"urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel"',
+                '+g.3gpp.smsip': None
+            }
+        )
 
     def _generate_branch(self, method: Method) -> str:
         return f"pyimsbranch-{random.randint(100, 5000)}-{method.name.lower()}"
@@ -229,3 +261,7 @@ class Client(object):
 
     def _generate_port(self) -> int:
         return random.randint(1000, 5000)
+
+    @property
+    def _my_credentials(self) -> Tuple[str, str]:
+        return self._account.imsi, self._server_host

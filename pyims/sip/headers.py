@@ -1,4 +1,4 @@
-from abc import ABC, abstractmethod
+from abc import ABC
 from typing import Optional, Dict
 import re
 
@@ -8,31 +8,14 @@ from .sip_types import (
     AuthenticationScheme, AuthenticationAlgorithm,
     STATUS_FROM_NUMBER, VERSIONS_BY_STR, AUTH_SCHEME_BY_STR, AUTH_ALGO_BY_STR
 )
+from ..util import Header
 
 
-class Header(ABC):
-    __NAME__: Optional[str] = None
-
-    @property
-    def name(self) -> str:
-        return self.__NAME__
-
-    @abstractmethod
-    def parse_from(self, value: str):
-        pass
-
-    @abstractmethod
-    def compose(self)-> str:
-        pass
-
-    def __str__(self):
-        return self.compose()
-
-    def __repr__(self):
-        return self.compose()
+class SipHeader(Header, ABC):
+    pass
 
 
-class IdentityHeader(Header, ABC):
+class IdentityHeader(SipHeader, ABC):
 
     def __init__(self, value: Optional[str] = None):
         self.value: Optional[str] = value
@@ -44,7 +27,7 @@ class IdentityHeader(Header, ABC):
         return self.value
 
 
-class IntHeader(Header, ABC):
+class IntHeader(SipHeader, ABC):
 
     def __init__(self, value: Optional[int] = None):
         self.value: Optional[int] = value
@@ -67,7 +50,7 @@ class CustomHeader(IdentityHeader):
         return self._name
 
 
-class SenderSendeeHeader(Header, ABC):
+class SenderSendeeHeader(SipHeader, ABC):
 
     def __init__(self, visible_name: Optional[str] = None, uri: Optional[str] = None, tag: Optional[str] = None):
         self.visible_name: Optional[str] = visible_name
@@ -93,7 +76,7 @@ class SenderSendeeHeader(Header, ABC):
         return res.strip()
 
 
-class Request(Header):
+class Request(SipHeader):
     __NAME__ = 'Request'
 
     def __init__(self, method: Optional[Method] = None, uri: Optional[str] = None, version: Optional[Version] = None):
@@ -113,7 +96,7 @@ class Request(Header):
         return f"{self.method.name} {self.uri} {self.version.value}"
 
 
-class Response(Header):
+class Response(SipHeader):
     __NAME__ = 'Response'
 
     def __init__(self, version: Optional[Version] = None, status: Optional[Status] = None):
@@ -130,7 +113,7 @@ class Response(Header):
         return f"{self.version.value} {self.status.code.value[0]} {self.status.description}"
 
 
-class CSeq(Header):
+class CSeq(SipHeader):
     __NAME__ = 'CSeq'
 
     def __init__(self, method: Optional[Method] = None, sequence: Optional[int] = None):
@@ -179,7 +162,7 @@ class Expires(IntHeader):
         super().__init__(value)
 
 
-class Contact(Header):
+class Contact(SipHeader):
     __NAME__ = 'Contact'
 
     def __init__(self, address: Optional[InetAddress] = None,
@@ -220,7 +203,7 @@ class Contact(Header):
         return ';' + ';'.join([f"{k}={v}" if v is not None else k for k,v in tags.items()])
 
 
-class Via(Header):
+class Via(SipHeader):
     __NAME__ = 'Via'
 
     def __init__(self, version: Optional[Version] = None,
@@ -252,7 +235,7 @@ class Via(Header):
         return res
 
 
-class Authorization(Header):
+class Authorization(SipHeader):
     __NAME__ = 'Authorization'
 
     def __init__(self,
@@ -326,7 +309,7 @@ class Authorization(Header):
         return f"{self.scheme.value} {values}"
 
 
-class WWWAuthenticate(Header):
+class WWWAuthenticate(SipHeader):
     __NAME__ = 'WWW-Authenticate'
 
     def __init__(self, scheme: Optional[AuthenticationScheme] = None,
