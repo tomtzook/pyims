@@ -6,18 +6,25 @@ from ..util import Field
 
 
 class Attribute(Field, ABC):
-    pass
+
+    @property
+    def name_only(self) -> bool:
+        return False
 
 
 class CustomAttribute(Attribute):
 
-    def __init__(self, name: str, value: str):
+    def __init__(self, name: str, value: Optional[str] = None):
         self._name = name
         self.value = value
 
     @property
     def name(self) -> str:
         return self._name
+
+    @property
+    def name_only(self) -> bool:
+        return self.value is None
 
     def parse_from(self, value: str):
         self.value = value
@@ -73,7 +80,45 @@ class Fmtp(Attribute):
         self.params = value[1].split(';')
 
     def compose(self) -> str:
-        return f"{self.media_format} {';'.join(self.params)}"
+        return f"{self.media_format.value} {';'.join(self.params)}"
 
 
-ATTRIBUTES = [RtpMap, Fmtp]
+class Rtcp(Attribute):
+    __NAME__ = 'rtcp'
+
+    def __init__(self, port: Optional[int] = None):
+        self.port = port
+
+    def parse_from(self, value: str):
+        self.port = int(value)
+
+    def compose(self) -> str:
+        return str(self.port)
+
+
+class Ptime(Attribute):
+    __NAME__ = 'ptime'
+
+    def __init__(self, time: Optional[int] = None):
+        self.time = time
+
+    def parse_from(self, value: str):
+        self.time = int(value)
+
+    def compose(self) -> str:
+        return str(self.time)
+
+
+class RecvOnly(CustomAttribute):
+
+    def __init__(self):
+        super().__init__('recvonly')
+
+
+class SendRecv(CustomAttribute):
+
+    def __init__(self):
+        super().__init__('sendrecv')
+
+
+ATTRIBUTES = [RtpMap, Fmtp, Rtcp, Ptime, RecvOnly, SendRecv]

@@ -166,15 +166,26 @@ class AttributeField(SdpField):
         for attr in ATTRIBUTES:
             attr = attr()
             if attr.name == value[0]:
-                attr.parse_from(value[1])
+                if not attr.name_only:
+                    attr.parse_from(value[1])
                 self.attribute = attr
                 break
 
         if self.attribute is None:
-            self.attribute = CustomAttribute(value[0], value[1])
+            if len(value) == 1:
+                self.attribute = CustomAttribute(value[0])
+            else:
+                self.attribute = CustomAttribute(value[0], value[1])
 
     def compose(self) -> str:
-        return f"{self.attribute.name}:{self.attribute.compose()}"
+        if self.attribute.name_only:
+            return self.attribute.name
+        else:
+            return f"{self.attribute.name}:{self.attribute.compose()}"
+
+    @staticmethod
+    def attributes_to_fields(attributes: List[Attribute]) -> List[SdpField]:
+        return [AttributeField(attr) for attr in attributes]
 
 
 class BandwidthInformation(SdpField):

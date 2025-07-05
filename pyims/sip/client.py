@@ -10,7 +10,8 @@ from .message import RequestMessage, ResponseMessage
 from .sip_types import Method, Version, StatusCode, MessageType, Status
 from .transport import Transport, Transaction
 from ..sdp import fields as sdp_fields
-from ..sdp.sdp_types import NetworkType, AddressType, MediaType, MediaProtocol
+from ..sdp import attributes as sdp_attributes
+from ..sdp.sdp_types import NetworkType, AddressType, MediaType, MediaProtocol, MediaFormat
 from ..sdp.parser import parse_sdp
 from ..sdp.message import SdpMessage
 from ..nio.inet import InetAddress
@@ -69,8 +70,17 @@ class Client(object):
             sdp_fields.Originator('-', '1', '1', NetworkType.IN, AddressType.IPv4, '172.22.0.1'),
             sdp_fields.SessionName('pyims Call'),
             sdp_fields.ConnectionInformation(NetworkType.IN, AddressType.IPv4, '172.22.0.1'),
-            sdp_fields.MediaDescription(MediaType.AUDIO, 6000, MediaProtocol.RTP_AVP)
-        ])
+            sdp_fields.MediaDescription(MediaType.AUDIO, 6000, MediaProtocol.RTP_AVP),
+            sdp_fields.BandwidthInformation('AS', 84),
+            sdp_fields.BandwidthInformation('TIAS', 64000),
+        ] + sdp_fields.AttributeField.attributes_to_fields(attributes=[
+            sdp_attributes.RtpMap(MediaFormat.PCMU, 'PCMU', 8000),
+            sdp_attributes.RtpMap(MediaFormat.PCMA, 'PCMA', 8000),
+            sdp_attributes.RtpMap(MediaFormat.EVENT, 'telephony-event', 8000),
+            sdp_attributes.Fmtp(MediaFormat.EVENT, ['0-16']),
+            sdp_attributes.Rtcp(6000),
+            sdp_attributes.SendRecv()
+        ]))
 
         with self._request(self._create_request(
             Method.INVITE,
@@ -202,7 +212,7 @@ class Client(object):
             self._on_invite_request(msg)
 
     def _on_invite_request(self, msg: RequestMessage):
-        sdp_message = sdp.parse_sdp(msg.body)
+        sdp_message = parse_sdp(msg.body)
         print(sdp_message)
 
         # report that we are trying

@@ -68,6 +68,7 @@ class MediaFormat(enum.Enum):
     MPV = 32, 90000, 0
     MP2T = 33, 90000, 1
     H263 = 34, 90000, 0
+    EVENT = 121, 8000, 0
 
 
 NETWORK_TYPE_BY_STR = {e.value: e for e in list(NetworkType)}
