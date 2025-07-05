@@ -1,7 +1,8 @@
 from abc import ABC
 from typing import Optional, List
 
-from .sdp_types import MediaFormat
+from .sdp_types import MediaFormat, TransmitType, TRANSMIT_TYPE_BY_STR
+
 from ..util import Field
 
 
@@ -109,16 +110,38 @@ class Ptime(Attribute):
         return str(self.time)
 
 
-class RecvOnly(CustomAttribute):
+class Transmit(CustomAttribute):
+
+    def __init__(self, transmit_type: TransmitType):
+        super().__init__(transmit_type.value)
+
+    @property
+    def transmit_type(self) -> TransmitType:
+        return TRANSMIT_TYPE_BY_STR[self.name]
+
+
+class RecvOnly(Transmit):
 
     def __init__(self):
-        super().__init__('recvonly')
+        super().__init__(TransmitType.RECVONLY)
 
 
-class SendRecv(CustomAttribute):
+class SendRecv(Transmit):
 
     def __init__(self):
-        super().__init__('sendrecv')
+        super().__init__(TransmitType.SENDRECV)
 
 
-ATTRIBUTES = [RtpMap, Fmtp, Rtcp, Ptime, RecvOnly, SendRecv]
+class SendOnly(Transmit):
+
+    def __init__(self):
+        super().__init__(TransmitType.SENDONLY)
+
+
+class Inactive(Transmit):
+
+    def __init__(self):
+        super().__init__(TransmitType.INACTIVE)
+
+
+ATTRIBUTES = [RtpMap, Fmtp, Rtcp, Ptime, RecvOnly, SendRecv, SendOnly, Inactive]

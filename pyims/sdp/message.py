@@ -1,26 +1,25 @@
 from typing import Union, Optional, List, Dict
 
-from .fields import SdpField
+from .fields import SdpField, AttributeField
+from .attributes import Attribute
 
 
 class SdpMessage(object):
 
-    def __init__(self, fields: Optional[Union[List[SdpField], Dict[str, SdpField]]] = None):
+    def __init__(self,
+                 fields: Optional[Union[List[SdpField], Dict[str, SdpField]]] = None,
+                 attributes: Optional[List[Attribute]] = None):
         if fields is None:
             self._fields = dict()
         elif isinstance(fields, list):
             self._fields = dict()
-            for field in fields:
-                if field.name in self._fields:
-                    v = self._fields[field.name]
-                    if isinstance(v, list):
-                        v.append(field)
-                    else:
-                        self._fields[field.name] = [v, field]
-                else:
-                    self._fields[field.name] = field
+            [self.add_field(field) for field in fields]
         else:
             self._fields = fields
+
+        if attributes is not None:
+            [self.add_field(AttributeField(attr)) for attr in attributes]
+
 
     def field(self, name: Union[str, type]) -> SdpField:
         if isinstance(name, str):

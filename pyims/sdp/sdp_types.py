@@ -71,8 +71,16 @@ class MediaFormat(enum.Enum):
     EVENT = 121, 8000, 0
 
 
+class TransmitType(enum.Enum):
+    RECVONLY = "recvonly"
+    SENDRECV = "sendrecv"
+    SENDONLY = "sendonly"
+    INACTIVE = "inactive"
+
+
 NETWORK_TYPE_BY_STR = {e.value: e for e in list(NetworkType)}
 ADDRESS_TYPE_BY_STR = {e.value: e for e in list(AddressType)}
 MEDIA_TYPE_BY_STR = {e.value: e for e in list(MediaType)}
 MEDIA_PROTOCOL_BY_STR = {e.value: e for e in list(MediaProtocol)}
 MEDIA_FORMAT_BY_INT = {e.value: e for e in list(MediaFormat)}
+TRANSMIT_TYPE_BY_STR = {e.value: e for e in list(TransmitType)}
