@@ -21,26 +21,53 @@ class MediaFormat(enum.Enum):
     def __new__(
         cls,
         value: int,
-        description: str = "",
         clock: int = 0,
         channel: int = 0,
     ):
         obj = object.__new__(cls)
         obj._value_ = value
-        obj.description = description
         obj.rate = clock
         obj.channel = channel
         return obj
 
-    @classmethod
-    def get(cls, value: int):
-        for e in list(cls):
+    @staticmethod
+    def get(value: int):
+        for e in list(MediaFormat):
             if e.value == value:
                 return e
 
-        return cls(value)
+        obj = object.__new__(MediaFormat)
+        obj._value_ = value
+        obj.rate = 0
+        obj.channel = 0
+        return obj
 
-    PCMU = 0, "PCMU", 8000, 1
+    # see https://datatracker.ietf.org/doc/html/rfc3551 tables 4 and 5
+    PCMU = 0, 8000, 1
+    GSM = 3, 8000, 1
+    G723 = 4, 8000, 1
+    DVI4_8000 = 5, 8000, 1
+    DVI4_16000 = 6, 16000, 1
+    LPC = 7, 8000, 1
+    PCMA = 8, 8000, 1
+    G722 = 9, 8000, 1
+    L16_2 = 10, 44100, 2
+    L16 = 11, 44100, 1
+    QCELP = 12, 8000, 1
+    CN = 13, 8000, 1
+    OPUS = 107, 48000, 2
+    MPA = 14, 90000, 0
+    G728 = 15, 8000, 1
+    DVI4_11025 = 16, 11025, 1
+    DVI4_22050 = 17, 22050, 1
+    G729 = 18, 8000, 1
+    CELB = 25, 90000, 0
+    JPEG = 26, 90000, 0
+    NV = 28, 90000, 0
+    H261 = 31, 90000, 0
+    MPV = 32, 90000, 0
+    MP2T = 33, 90000, 1
+    H263 = 34, 90000, 0
 
 
 NETWORK_TYPE_BY_STR = {e.value: e for e in list(NetworkType)}
