@@ -16,7 +16,8 @@ class TcpSocket(ReadableStream[bytes], WritableStream[bytes]):
 
     def __init__(self, skt: Optional[socket.socket] = None,
                  local_address: Optional[InetAddress] = None,
-                 remote_address: Optional[InetAddress] = None):
+                 remote_address: Optional[InetAddress] = None,
+                 error_callback: Optional[Callable[[Exception], None]] = None):
         if skt is None:
             self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
         else:
@@ -31,6 +32,7 @@ class TcpSocket(ReadableStream[bytes], WritableStream[bytes]):
 
         self._read_callback = None
         self._connect_callback = None
+        self._error_callback = error_callback
         self._local_address: Optional[InetAddress] = local_address
         self._remote_address: Optional[InetAddress] = remote_address
 
@@ -97,6 +99,9 @@ class TcpSocket(ReadableStream[bytes], WritableStream[bytes]):
         logger.exception('[Socket, %d] [TCP-C] On Error', self._socket.fileno(), exc_info=ex)
         self.close()
 
+        if self._error_callback:
+            self._error_callback(ex)
+
     def __del__(self):
         self.close()
 
@@ -159,7 +164,7 @@ class TcpServerSocket(object):
 
 class UdpSocket(ReadableStream[Tuple[InetAddress, bytes]], WritableStream[Tuple[InetAddress, bytes]]):
 
-    def __init__(self):
+    def __init__(self, error_callback: Optional[Callable[[Exception], None]] = None):
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         self._socket.setblocking(False)
         self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -169,6 +174,7 @@ class UdpSocket(ReadableStream[Tuple[InetAddress, bytes]], WritableStream[Tuple[
 
         self._read_callback = None
         self._connect_callback = None
+        self._error_callback = error_callback
         self._local_address: Optional[InetAddress] = None
 
     @property
@@ -206,6 +212,9 @@ class UdpSocket(ReadableStream[Tuple[InetAddress, bytes]], WritableStream[Tuple[
     def _on_error(self, ex: Exception):
         logger.exception('[Socket, %d] [UDP] On Error', self._socket.fileno(), exc_info=ex)
         self.close()
+
+        if self._error_callback:
+            self._error_callback(ex)
 
     def __del__(self):
         self.close()

@@ -15,12 +15,16 @@ logger = logging.getLogger('pyims.sip.transport')
 
 class Transaction(ABC):
 
-    def __init__(self, on_new_messages: Optional[Callable[[], None]] = None):
+    def __init__(self,
+                 on_new_messages: Optional[Callable[[], None]] = None,
+                 on_error: Optional[Callable[[Exception], None]] = None):
         self._lock = threading.RLock()
         self._read_event = threading.Event()
         self._read_buff = io.BytesIO()
         self._in_message_queue: deque[Message] = deque()
-        self._on_new_messages = on_new_messages
+        self._on_new_messages_callback = on_new_messages
+        self._on_error_callback = on_error
+        self._errored = False
 
     @abstractmethod
     def send(self, msg: Message):
@@ -28,6 +32,8 @@ class Transaction(ABC):
 
     def await_message(self, timeout: float = 5) -> Optional[Message]:
         with self._lock:
+            self._throw_if_errored()
+
             if len(self._in_message_queue) > 0:
                 return self._in_message_queue.popleft()
 
@@ -35,6 +41,7 @@ class Transaction(ABC):
             self._read_event.clear()
 
             with self._lock:
+                self._throw_if_errored()
                 return self._in_message_queue.popleft()
         else:
             raise TimeoutError()
@@ -51,6 +58,9 @@ class Transaction(ABC):
         read_callback = None
         has_new_messages = False
         with self._lock:
+            if self._errored:
+                return
+
             self._read_buff.write(data)
 
             self._read_buff.seek(0, io.SEEK_SET)
@@ -64,7 +74,7 @@ class Transaction(ABC):
 
             if len(messages) > 0:
                 has_new_messages = True
-                read_callback = self._on_new_messages
+                read_callback = self._on_new_messages_callback
 
         if has_new_messages:
             logger.info('[SIP] Notifying new messages')
@@ -72,6 +82,21 @@ class Transaction(ABC):
 
             if read_callback is not None:
                 read_callback()
+
+    def _on_error(self, ex: Exception):
+        callback = None
+        with self._lock:
+            self._errored = True
+            callback = self._on_error_callback
+
+        self._read_event.set()
+
+        if callback:
+            callback(ex)
+
+    def _throw_if_errored(self):
+        if self._errored:
+            raise EnvironmentError('transaction failure')
 
     @staticmethod
     def _parse_messages(data: bytes) -> Tuple[int, List[Message]]:
@@ -101,7 +126,11 @@ class Transport(ABC):
         pass
 
     @abstractmethod
-    def open(self, local_address: InetAddress, remote_address: InetAddress, on_new_messages: Callable[[], None]) -> Transaction:
+    def open(self,
+             local_address: InetAddress,
+             remote_address: InetAddress,
+             on_new_messages: Callable[[], None],
+             on_error: Callable[[Exception], None]) -> Transaction:
         pass
 
     @abstractmethod
@@ -111,8 +140,13 @@ class Transport(ABC):
 
 class TcpTransaction(Transaction):
 
-    def __init__(self, selector: Selector, local_address: InetAddress, remote_address: InetAddress, on_new_messages: Callable[[], None]):
-        super().__init__(on_new_messages)
+    def __init__(self,
+                 selector: Selector,
+                 local_address: InetAddress,
+                 remote_address: InetAddress,
+                 on_new_messages: Callable[[], None],
+                 on_error: Callable[[Exception], None]):
+        super().__init__(on_new_messages, on_error)
         self._socket: Optional[TcpSocket] = None
         self._is_connected: bool = False
         self._out_message_queue: deque[Message] = deque()
@@ -121,6 +155,8 @@ class TcpTransaction(Transaction):
 
     def send(self, message: Message):
         with self._lock:
+            self._throw_if_errored()
+
             logger.debug('[SIP] [TCP-C] User sending new message %s', message.compose())
 
             if self._socket is None:
@@ -137,11 +173,14 @@ class TcpTransaction(Transaction):
                 self._socket.close()
                 self._socket = None
 
-    def _start_open_and_connect(self, selector: Selector, local_address: InetAddress, remote_address: InetAddress):
+    def _start_open_and_connect(self,
+                                selector: Selector,
+                                local_address: InetAddress,
+                                remote_address: InetAddress):
         logger.info('[SIP] [TCP-C] Opening new socket (bind %s) and connecting (remote %s)', local_address,
                     remote_address)
 
-        skt = TcpSocket()
+        skt = TcpSocket(error_callback=self._on_error)
         skt.bind(local_address)
         skt.register_to(selector)
         self._socket = skt
@@ -177,8 +216,12 @@ class TcpTransport(Transport):
     def name(self) -> str:
         return 'TCP'
 
-    def open(self, local_address: InetAddress, remote_address: InetAddress, on_new_messages: Callable[[], None]) -> Transaction:
-        return TcpTransaction(self._selector_thread.selector, local_address, remote_address, on_new_messages)
+    def open(self,
+             local_address: InetAddress,
+             remote_address: InetAddress,
+             on_new_messages: Callable[[], None],
+             on_error: Callable[[Exception], None]) -> Transaction:
+        return TcpTransaction(self._selector_thread.selector, local_address, remote_address, on_new_messages, on_error)
 
     def close(self):
         del self._selector_thread
@@ -186,9 +229,13 @@ class TcpTransport(Transport):
 
 class UdpTransaction(Transaction):
 
-    def __init__(self, selector: Selector, local_address: InetAddress, remote_address: InetAddress, on_new_messages: Callable[[], None]):
-        super().__init__(on_new_messages)
-        self._socket = UdpSocket()
+    def __init__(self, selector: Selector,
+                 local_address: InetAddress,
+                 remote_address: InetAddress,
+                 on_new_messages: Callable[[], None],
+                 on_error: Callable[[Exception], None]):
+        super().__init__(on_new_messages, on_error)
+        self._socket = UdpSocket(error_callback=self._on_error)
         self._remote_address = remote_address
 
         self._socket.bind(local_address)
@@ -197,6 +244,8 @@ class UdpTransaction(Transaction):
 
     def send(self, message: Message):
         with self._lock:
+            self._throw_if_errored()
+
             logger.debug('[SIP] [UDP] User sending new message %s', message.compose())
 
             if self._socket is None:
@@ -224,8 +273,12 @@ class UdpTransport(Transport):
     def name(self) -> str:
         return 'UDP'
 
-    def open(self, local_address: InetAddress, remote_address: InetAddress, on_new_messages: Callable[[], None]) -> Transaction:
-        return UdpTransaction(self._selector_thread.selector, local_address, remote_address, on_new_messages)
+    def open(self,
+             local_address: InetAddress,
+             remote_address: InetAddress,
+             on_new_messages: Callable[[], None],
+             on_error: Callable[[Exception], None]) -> Transaction:
+        return UdpTransaction(self._selector_thread.selector, local_address, remote_address, on_new_messages, on_error)
 
     def close(self):
         del self._selector_thread

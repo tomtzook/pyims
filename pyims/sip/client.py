@@ -135,7 +135,12 @@ class Client(object):
         print(request.compose())
 
         if self._transaction is None:
-            self._transaction = self._transport.open(self._local_address, self._server_endpoint, self._on_messages)
+            self._transaction = self._transport.open(
+                self._local_address,
+                self._server_endpoint,
+                self._on_messages,
+                self._on_error
+            )
 
         self._transaction.send(request)
         self._in_transaction = True
@@ -147,7 +152,12 @@ class Client(object):
         print(response.compose())
 
         if self._transaction is None:
-            self._transaction = self._transport.open(self._local_address, self._server_endpoint, self._on_messages)
+            self._transaction = self._transport.open(
+                self._local_address,
+                self._server_endpoint,
+                self._on_messages,
+                self._on_error
+            )
 
         self._transaction.send(response)
 
@@ -261,6 +271,10 @@ class Client(object):
         assert isinstance(msg, RequestMessage)
         if msg.method == Method.INVITE:
             self._on_invite_request(msg)
+
+    def _on_error(self, ex: Exception):
+        self._transaction = None
+        self._is_registered = False
 
     def _on_invite_request(self, msg: RequestMessage):
         sdp_message = parse_sdp(msg.body)
