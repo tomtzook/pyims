@@ -110,10 +110,10 @@ class Transaction(ABC):
             if end_of_headers < 0:
                 break
 
-            message = parse(data, start)
+            message, size = parse(data, start)
             messages.append(message)
 
-            start = end_of_headers + len('\r\n\r\n') + len(message.body)
+            start += size
 
         return start, messages
 
@@ -123,6 +123,11 @@ class Transport(ABC):
     @property
     @abstractmethod
     def name(self) -> str:
+        pass
+
+    @property
+    @abstractmethod
+    def selector(self) -> Selector:
         pass
 
     @abstractmethod
@@ -216,6 +221,10 @@ class TcpTransport(Transport):
     def name(self) -> str:
         return 'TCP'
 
+    @property
+    def selector(self) -> Selector:
+        return self._selector_thread.selector
+
     def open(self,
              local_address: InetAddress,
              remote_address: InetAddress,
@@ -272,6 +281,10 @@ class UdpTransport(Transport):
     @property
     def name(self) -> str:
         return 'UDP'
+
+    @property
+    def selector(self) -> Selector:
+        return self._selector_thread.selector
 
     def open(self,
              local_address: InetAddress,

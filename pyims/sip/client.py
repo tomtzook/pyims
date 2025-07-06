@@ -1,20 +1,22 @@
 import logging
 import random
 from contextlib import contextmanager
-from typing import List, Optional, Union, Tuple, Callable
+from typing import List, Optional, Union, Tuple, Callable, Any, Dict
 
 from .auth import Account, create_auth_header
-from .headers import Header, CSeq, Via, CallID, ContentLength, Expires, MaxForwards, CustomHeader, From, To, \
+from .bodies import wrap_body
+from .call import CallSession, CallInformation, RtpCallSession, SessionNode
+from .headers import Header, CSeq, Via, CallID, Expires, MaxForwards, CustomHeader, From, To, \
     Contact, WWWAuthenticate
-from .message import RequestMessage, ResponseMessage
+from .message import RequestMessage, ResponseMessage, Message
 from .sip_types import Method, Version, StatusCode, MessageType, Status
 from .transport import Transport, Transaction
-from ..sdp import fields as sdp_fields
-from ..sdp import attributes as sdp_attributes
-from ..sdp.sdp_types import NetworkType, AddressType, MediaType, MediaProtocol, MediaFormat
-from ..sdp.parser import parse_sdp
-from ..sdp.message import SdpMessage
 from ..nio.inet import InetAddress
+from ..nio.sockets import UdpSocket
+from ..sdp import attributes as sdp_attributes
+from ..sdp import fields as sdp_fields
+from ..sdp.message import SdpMessage
+from ..sdp.sdp_types import NetworkType, AddressType, MediaType, MediaProtocol, MediaFormat
 
 logger = logging.getLogger('pyims.sip.client')
 
@@ -34,6 +36,11 @@ class Client(object):
         self._transaction: Optional[Transaction] = None
         self._in_transaction: bool = False
         self._is_registered: bool = False
+        self._active_sessions: Dict[int, SessionNode] = dict()
+        self._call_callbacks: List[Callable[[CallSession], None]] = []
+
+    def on_new_call(self, callback: Callable[[CallSession], None]):
+        self._call_callbacks.append(callback)
 
     def register(self):
         if self._is_registered:
@@ -41,19 +48,19 @@ class Client(object):
 
         logger.info('Client starting registration with network')
 
-        def _on_response(transaction: Transaction, response: ResponseMessage) -> bool:
+        def _on_response(transaction: Transaction, response: ResponseMessage) -> Tuple[bool, None]:
             if response.status.code == StatusCode.TRYING:
-                return False
+                return False, None
             elif response.status.code == StatusCode.OK:
                 self._is_registered = True
-                return True
+                return True, None
             elif response.status.code == StatusCode.UNAUTHORIZED:
                 # we must authorize ourselves
                 auth_header = response.header(WWWAuthenticate)
                 assert isinstance(auth_header, WWWAuthenticate)
 
                 transaction.send(self._create_request_register(auth_header))
-                return False
+                return False, None
             else:
                 raise RuntimeError(f"Register failed: {response.status}")
 
@@ -63,25 +70,29 @@ class Client(object):
         if not self._is_registered:
             return
 
-        def _on_response(transaction: Transaction, response: ResponseMessage) -> bool:
+        def _on_response(transaction: Transaction, response: ResponseMessage) -> Tuple[bool, None]:
             if response.status.code == StatusCode.TRYING:
-                return False
+                return False, None
             elif response.status.code == StatusCode.OK:
                 self._is_registered = False
-                return True
+                return True, None
             else:
                 raise RuntimeError(f"Register failed: {response.status}")
 
         self._do_transaction(self._create_request_bye(), _on_response)
 
-    def invite(self, invitee: str, subject: str):
-        body = SdpMessage(
+    def invite(self, invitee: str, subject: str) -> CallSession:
+        session_id = self._generate_session_id()
+        session_node = SessionNode(session_id)
+        self._active_sessions[session_id] = session_node
+
+        local_info = SdpMessage(
             fields=[
                 sdp_fields.Version(0),
-                sdp_fields.Originator('-', '1', '1', NetworkType.IN, AddressType.IPv4, '172.22.0.1'),
+                sdp_fields.Originator('-', str(session_id), '1', NetworkType.IN, AddressType.IPv4, '172.22.0.1'),
                 sdp_fields.SessionName('pyims Call'),
                 sdp_fields.ConnectionInformation(NetworkType.IN, AddressType.IPv4, '172.22.0.1'),
-                sdp_fields.MediaDescription(MediaType.AUDIO, 6000, MediaProtocol.RTP_AVP),
+                sdp_fields.MediaDescription(MediaType.AUDIO, self._generate_port(), MediaProtocol.RTP_AVP, [MediaFormat.PCMU]),
                 sdp_fields.BandwidthInformation('AS', 84),
                 sdp_fields.BandwidthInformation('TIAS', 64000),
             ],
@@ -94,15 +105,18 @@ class Client(object):
                 sdp_attributes.SendRecv()
             ])
 
-        def _on_response(transaction: Transaction, response: ResponseMessage) -> bool:
+        def _on_response(transaction: Transaction, response: ResponseMessage) -> Tuple[bool, Any]:
             if response.status.code == StatusCode.TRYING:
-                return False
+                return False, None
             elif response.status.code == StatusCode.OK:
-                return True
+                remote_info = response.body_as(SdpMessage)
+                session = self._create_call_session(local_info, remote_info)
+                session_node.attach_session(session)
+                return True, session
             else:
                 raise RuntimeError(f"Invite failed: {response.status}")
 
-        self._do_transaction(self._create_request_invite(invitee, subject, body), _on_response)
+        return self._do_transaction(self._create_request_invite(invitee, subject, local_info), _on_response)
 
     def close(self):
         if self._transaction is not None:
@@ -119,15 +133,16 @@ class Client(object):
         self._is_registered = False
         self._in_transaction = False
 
-    def _do_transaction(self, request: RequestMessage, on_response: Callable[[Transaction, ResponseMessage], bool], timeout: int = 5):
+    def _do_transaction(self, request: RequestMessage, on_response: Callable[[Transaction, ResponseMessage], Tuple[bool, Any]], timeout: int = 5) -> Optional[Any]:
         with self._request(request) as transaction:
             while True:
                 response = transaction.await_message(timeout=timeout)
                 assert isinstance(response, ResponseMessage)
                 print(response)
 
-                if on_response(transaction, response):
-                    break
+                done, data = on_response(transaction, response)
+                if done:
+                    return data
 
     @contextmanager
     def _request(self, request: RequestMessage):
@@ -198,8 +213,7 @@ class Client(object):
                 CustomHeader('Subject', subject),
                 self._generate_our_contact()
             ],
-            body=sdp.compose(),
-            content_type='application/sdp'
+            body=sdp
         )
 
     def _create_request_bye(self) -> RequestMessage:
@@ -224,37 +238,41 @@ class Client(object):
                         seq_num: int = 1,
                         target_uri: Optional[str] = None,
                         headers: List[Header] = None,
-                        body: str = '',
+                        body: Optional[Any] = None,
                         content_type: Optional[str] = None) -> RequestMessage:
         if target_uri is None:
             target_uri = f"sip:{self._server_host}"
         if headers is None:
             headers = list()
 
-        request = RequestMessage(Version.VERSION_2, method, target_uri, headers, body)
-        request.add_header(CSeq(method, seq_num), override=False)
-        request.add_header(MaxForwards(70), override=False)
-        request.add_header(Expires(1800), override=False)
-        request.add_header(ContentLength(len(body)), override=True)
+        request = RequestMessage(Version.VERSION_2, method, target_uri, headers, wrap_body(body, content_type))
         request.add_header(Via(Version.VERSION_2, self._transport.name, self._local_address, branch=self._generate_branch(method)))
-
-        if len(body) > 0 and content_type is not None:
-            request.add_header(CustomHeader('Content-Type', content_type))
+        self._added_headers_to_message(request, method, seq_num)
 
         return request
 
     def _create_response(self,
-                        status: Union[StatusCode, Status],
-                        headers: List[Header] = None) -> ResponseMessage:
+                         status: Union[StatusCode, Status],
+                         original_request: RequestMessage,
+                         headers: List[Header] = None,
+                         body: Optional[Any] = None,
+                         content_type: Optional[str] = None) -> ResponseMessage:
         if headers is None:
             headers = list()
 
-        response = ResponseMessage(Version.VERSION_2, status, headers)
-        response.add_header(MaxForwards(70), override=False)
-        response.add_header(Expires(1800), override=False)
-        response.add_header(ContentLength(0), override=True)
+        response = ResponseMessage(Version.VERSION_2, status, headers, wrap_body(body, content_type))
+        self._added_headers_to_message(response,
+                                       original_request.method,
+                                       original_request.header(CSeq).sequence)
 
         return response
+
+    def _added_headers_to_message(self, message: Message,
+                                  method: Method,
+                                  seq_num: int):
+        message.add_header(CSeq(method, seq_num), override=False)
+        message.add_header(MaxForwards(70), override=False)
+        message.add_header(Expires(1800), override=False)
 
     def _on_messages(self):
         if self._transaction is None or self._in_transaction:
@@ -276,10 +294,36 @@ class Client(object):
         self._transaction = None
         self._is_registered = False
 
-    def _on_invite_request(self, msg: RequestMessage):
-        sdp_message = parse_sdp(msg.body)
-        print(sdp_message)
+    def _on_invite_request(self, request: RequestMessage):
+        remote_sdp = request.body_as(SdpMessage)
+        print(remote_sdp)
 
+        session_id = self._generate_session_id()
+        session_node = SessionNode(session_id)
+        self._active_sessions[session_id] = session_node
+
+        local_sdp = self._create_media_response(session_id, remote_sdp)
+        print(local_sdp)
+
+        session = self._create_call_session(local_sdp, remote_sdp)
+        session_node.attach_session(session)
+
+        self._respond(self._create_response(
+            StatusCode.OK,
+            request,
+            headers=[
+                request.header(From),
+                request.header(To),
+                request.header(CallID)
+            ],
+            body=local_sdp
+        ))
+
+        for callback in self._call_callbacks:
+            callback(session)
+
+        # TODO: HANDLE USER RINGING
+        """
         # report that we are trying
         self._respond(self._create_response(
             StatusCode.TRYING,
@@ -307,6 +351,29 @@ class Client(object):
             ]
         ))
         # todo: ring user
+        """
+
+    def _create_media_response(self, session_id: int, remote_info: SdpMessage) -> SdpMessage:
+        # TODO GENERATE DYNAMICALLY
+        port = random.randint(10000, 12000)
+
+        return SdpMessage(fields=[
+            sdp_fields.Version(0),
+            sdp_fields.Originator('-', str(session_id), '1', NetworkType.IN, AddressType.IPv4, self._local_address.ip),
+            sdp_fields.SessionName('pyims Call'),
+            sdp_fields.ConnectionInformation(NetworkType.IN, AddressType.IPv4, self._local_address.ip),
+            sdp_fields.MediaDescription(MediaType.AUDIO, port, MediaProtocol.RTP_AVP, [MediaFormat.PCMU]),
+        ], attributes=[
+            sdp_attributes.RtpMap(MediaFormat.PCMU, 'PCMU', 8000),
+        ])
+
+    def _create_call_session(self, local_info: SdpMessage, remote_info: SdpMessage) -> CallSession:
+        info = CallInformation(local_info, remote_info)
+        skt = UdpSocket()
+        skt.bind(info.local_address)
+        skt.register_to(self._transport.selector)
+
+        return RtpCallSession(info, skt)
 
     def _generate_from(self, username: str, server: str, tag: Optional[str] = None) -> From:
         return From(uri=f"sip:{username}@{server}", tag=tag)
@@ -327,6 +394,9 @@ class Client(object):
                 '+g.3gpp.smsip': None
             }
         )
+
+    def _generate_session_id(self) -> int:
+        return random.randint(1, 10000)
 
     def _generate_branch(self, method: Method) -> str:
         return f"pyimsbranch-{random.randint(100, 5000)}-{method.name.lower()}"

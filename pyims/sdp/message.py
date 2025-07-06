@@ -1,10 +1,11 @@
-from typing import Union, Optional, List, Dict
+from typing import Union, Optional, List, Dict, TypeVar
 
 from .fields import SdpField, AttributeField
 from .attributes import Attribute
 
 
 class SdpMessage(object):
+    T = TypeVar('T')
 
     def __init__(self,
                  fields: Optional[Union[List[SdpField], Dict[str, SdpField]]] = None,
@@ -21,11 +22,23 @@ class SdpMessage(object):
             [self.add_field(AttributeField(attr)) for attr in attributes]
 
 
-    def field(self, name: Union[str, type]) -> SdpField:
-        if isinstance(name, str):
-            return self._fields[name]
-        else:
-            return self._fields[name.__NAME__]
+    def field(self, name: Union[str, T]) -> T:
+        wanted_name = name if isinstance(name, str) else name.__NAME__
+        return self._fields[wanted_name]
+
+    def attribute(self, name: Union[str, T]) -> List[T]:
+        wanted_name = name if isinstance(name, str) else name.__NAME__
+
+        lst = []
+        for field in self._fields.values():
+            if not isinstance(field, AttributeField):
+                continue
+
+            if field.attribute.name == wanted_name:
+                lst.append(field.attribute)
+
+        return lst
+
 
     def add_field(self, field: SdpField):
         if field.name in self._fields:

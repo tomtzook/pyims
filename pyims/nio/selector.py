@@ -79,6 +79,10 @@ class SelectorRegistration(ABC):
         pass
 
     @abstractmethod
+    def on_closed(self):
+        pass
+
+    @abstractmethod
     def on_except(self):
         pass
 
@@ -89,12 +93,14 @@ class TcpRegistration(SelectorRegistration):
                  read_callback: Callable[[bytes], None],
                  connect_callback: Callable[[], None],
                  error_callback: Callable[[Exception], None],
+                 closed_callback: Callable[[], None],
                  already_connected: bool = False):
         super().__init__(resource)
 
         self._read_callback = read_callback
         self._connect_callback = connect_callback
         self._error_callback = error_callback
+        self._closed_callback = closed_callback
 
         self._send_queue: deque[bytes] = deque()
         self._connecting: bool = False
@@ -125,9 +131,14 @@ class TcpRegistration(SelectorRegistration):
             return
 
         try:
-            data = self.resource.recv(1024)
-            logger.info('[Reg %d] Read new data (len %d)', self.reg_id, len(data))
-            self._read_callback(data)
+            data = self.resource.recv(4096)
+            if data is None or len(data) == 0:
+                # eof
+                logger.info('[Reg %d] Read EOF', self.reg_id)
+                self.on_closed()
+            else:
+                logger.info('[Reg %d] Read new data (len %d)', self.reg_id, len(data))
+                self._read_callback(data)
         except Exception as e:
             self._on_error(e)
 
@@ -140,6 +151,9 @@ class TcpRegistration(SelectorRegistration):
         elif self._connecting:
             # unconnected, so we are wanting to connect
             self._finalize_connect()
+
+    def on_closed(self):
+        self._closed_callback()
 
     def on_except(self):
         logger.debug('[Reg %d] On Except', self.reg_id)
@@ -214,6 +228,9 @@ class TcpServerRegistration(SelectorRegistration):
     def on_write(self):
         pass
 
+    def on_closed(self):
+        pass
+
     def on_except(self):
         logger.debug('[Reg %d] On Except', self.reg_id)
         self._on_error(None)
@@ -230,11 +247,13 @@ class UdpRegistration(SelectorRegistration):
 
     def __init__(self, resource: socket.socket,
                  read_callback: Callable[[InetAddress, bytes], None],
-                 error_callback: Callable[[Exception], None]):
+                 error_callback: Callable[[Exception], None],
+                 closed_callback: Callable[[], None]):
         super().__init__(resource)
 
         self._read_callback = read_callback
         self._error_callback = error_callback
+        self._closed_callback = closed_callback
 
         self._send_queue: deque[Tuple[InetAddress, bytes]] = deque()
 
@@ -252,9 +271,13 @@ class UdpRegistration(SelectorRegistration):
         logger.debug('[Reg %d] On Read', self.reg_id)
 
         try:
-            data, sender = self.resource.recvfrom(1024)
-            logger.info('[Reg %d] Read new data (len %d)', self.reg_id, len(data))
-            self._read_callback(sender, data)
+            data, sender = self.resource.recvfrom(4096)
+            if data is None or len(data) < 1:
+                # eof
+                self.on_closed()
+            else:
+                logger.info('[Reg %d] Read new data (len %d)', self.reg_id, len(data))
+                self._read_callback(InetAddress(*sender), data)
         except Exception as e:
             self._on_error(e)
 
@@ -262,6 +285,9 @@ class UdpRegistration(SelectorRegistration):
         logger.debug('[Reg %d] On Write', self.reg_id)
         if len(self._send_queue) > 0:
             self._do_write()
+
+    def on_closed(self):
+        self._closed_callback()
 
     def on_except(self):
         logger.debug('[Reg %d] On Except', self.reg_id)
@@ -389,7 +415,9 @@ class Selector(object):
 
         for reg_id in to_remove:
             logger.info('[Selector] Removing registration %d because fd closed', reg_id)
-            self._registered.pop(reg_id)
+            reg = self._registered.pop(reg_id)
+            if reg is not None:
+                reg.on_closed()
 
     def _on_reg_config_changed(self):
         with self._lock:

@@ -21,7 +21,7 @@ class RtpPacket(object):
         self.has_padding = False
         self.has_extension = False
         self.marker = marker
-        self.csrc: csrc or []
+        self.csrc = csrc or []
 
         self.payload_format = payload_format
         self.seq_num = seq_num

@@ -22,12 +22,12 @@ class MediaFormat(enum.Enum):
         cls,
         value: int,
         clock: int = 0,
-        channel: int = 0,
+        channels: int = 0,
     ):
         obj = object.__new__(cls)
         obj._value_ = value
         obj.rate = clock
-        obj.channel = channel
+        obj.channels = channels
         return obj
 
     @staticmethod
@@ -39,7 +39,7 @@ class MediaFormat(enum.Enum):
         obj = object.__new__(MediaFormat)
         obj._value_ = value
         obj.rate = 0
-        obj.channel = 0
+        obj.channels = 0
         return obj
 
     # see https://datatracker.ietf.org/doc/html/rfc3551 tables 4 and 5

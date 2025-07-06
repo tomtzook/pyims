@@ -18,6 +18,18 @@ class Decoder(ABC):
         pass
 
 
+class PcmuEncoder(Encoder):
+
+    def encode(self, data: bytes) -> bytes:
+        return audioop.lin2ulaw(data, 2)
+
+
+class PcmuDecoder(Decoder):
+
+    def decode(self, data: bytes) -> bytes:
+        return audioop.ulaw2lin(data, 2)
+
+
 class PcmaEncoder(Encoder):
 
     def encode(self, data: bytes) -> bytes:
@@ -32,6 +44,7 @@ class PcmaDecoder(Decoder):
 
 def get_encoder(media_format: MediaFormat) -> Encoder:
     encoders = {
+        MediaFormat.PCMU: PcmuEncoder,
         MediaFormat.PCMA: PcmaEncoder
     }
 
@@ -43,6 +56,7 @@ def get_encoder(media_format: MediaFormat) -> Encoder:
 
 def get_decoder(media_format: MediaFormat) -> Decoder:
     decoders = {
+        MediaFormat.PCMU: PcmuDecoder,
         MediaFormat.PCMA: PcmaDecoder
     }
 

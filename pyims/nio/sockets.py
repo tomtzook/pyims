@@ -27,7 +27,8 @@ class TcpSocket(ReadableStream[bytes], WritableStream[bytes]):
         self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
 
-        self._registration = TcpRegistration(self._socket, self._on_read, self._on_connect, self._on_error, already_connected=skt is not None)
+        self._registration = TcpRegistration(self._socket, self._on_read, self._on_connect, self._on_error, self._on_closed,
+                                             already_connected=skt is not None)
         self._state = self.STATE_UNCONNECTED if skt is None else self.STATE_CONNECTED
 
         self._read_callback = None
@@ -79,6 +80,9 @@ class TcpSocket(ReadableStream[bytes], WritableStream[bytes]):
         logger.info('[Socket, %d] [TCP-C] Writing data (len %d)', self._socket.fileno(), len(data))
         self._registration.enqueue_send(data)
 
+    def write_done(self):
+        self.close()
+
     def close(self):
         logger.info('[Socket, %d] [TCP-C] Closing', self._socket.fileno())
         self._socket.close()
@@ -101,6 +105,11 @@ class TcpSocket(ReadableStream[bytes], WritableStream[bytes]):
 
         if self._error_callback:
             self._error_callback(ex)
+
+    def _on_closed(self):
+        self.close()
+        if self._read_callback is not None:
+            self._read_callback(None)
 
     def __del__(self):
         self.close()
@@ -170,7 +179,7 @@ class UdpSocket(ReadableStream[Tuple[InetAddress, bytes]], WritableStream[Tuple[
         self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
 
-        self._registration = UdpRegistration(self._socket, self._on_read, self._on_error)
+        self._registration = UdpRegistration(self._socket, self._on_read, self._on_error, self._on_closed)
 
         self._read_callback = None
         self._connect_callback = None
@@ -200,6 +209,9 @@ class UdpSocket(ReadableStream[Tuple[InetAddress, bytes]], WritableStream[Tuple[
         logger.info('[Socket, %d] [UDP] Writing data (dest %s, len %d)', self._socket.fileno(), dest, len(data))
         self._registration.enqueue_send(dest, data)
 
+    def write_done(self):
+        self.close()
+
     def close(self):
         logger.info('[Socket, %d] [UDP] Closing', self._socket.fileno())
         self._socket.close()
@@ -208,6 +220,11 @@ class UdpSocket(ReadableStream[Tuple[InetAddress, bytes]], WritableStream[Tuple[
         logger.debug('[Socket, %d] [UDP] On Read data (sender %s, len %d)', self._socket.fileno(), sender, len(data))
         if self._read_callback is not None:
             self._read_callback((sender, data))
+
+    def _on_closed(self):
+        self.close()
+        if self._read_callback is not None:
+            self._read_callback(None)
 
     def _on_error(self, ex: Exception):
         logger.exception('[Socket, %d] [UDP] On Error', self._socket.fileno(), exc_info=ex)

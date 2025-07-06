@@ -1,5 +1,4 @@
-import time
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Callable
 
 from .codecs import Encoder, Decoder
 from .rtp_types import RtpPacket, parse_rtp_packet
@@ -31,43 +30,17 @@ class RtpStream(object):
 
         self._seq_num: int = 0
         self._timestamp: int = 0
+        self._complete_callback = None
 
+    def start(self, complete_callback: Callable[[], None]):
+        self._complete_callback = complete_callback
         self._socket.start_read(self._on_remote_data)
         self._source.start_read(self._on_local_data)
 
-    def _loop_send(self):
-        while True:
-            start = time.monotonic_ns()
-
-            payload = self._source.query()
-            if payload is None:
-                time.sleep(0.02)
-                continue
-
-            payload = self._encoder.encode(payload)
-            packet = RtpPacket(
-                self._format,
-                self._seq_num,
-                self._timestamp,
-                self._ssrc,
-                payload
-            )
-            # TODO: WAIT READ FINISH
-            self._socket.write((self._remote, packet.compose()))
-
-            delay = (1 / self._format.rate) * 160
-            proc_time = (time.monotonic_ns() - start) / 1e9
-            sleep_time = delay - proc_time
-            sleep_time = max(0, sleep_time)
-
-            self._seq_num = (self._seq_num + 1) % 65535
-            self._timestamp = (self._timestamp + len(payload)) % 4294967295
-
-            time.sleep(sleep_time)
-
     def _on_local_data(self, data: Optional[bytes]):
         if data is None:
-            # TODO: END OF STREAM
+            if self._complete_callback:
+                self._complete_callback()
             return
 
         payload = self._encoder.encode(data)
@@ -85,7 +58,7 @@ class RtpStream(object):
 
     def _on_remote_data(self, data_p: Optional[Tuple[InetAddress, bytes]]):
         if data_p is None:
-            # TODO: END OF STREAM
+            self._sink.write_done()
             return
 
         sender, data = data_p

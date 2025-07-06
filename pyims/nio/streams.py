@@ -19,3 +19,7 @@ class WritableStream(ABC, Generic[T]):
     @abstractmethod
     def write(self, data: T):
         pass
+
+    @abstractmethod
+    def write_done(self):
+        pass
