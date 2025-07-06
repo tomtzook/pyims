@@ -235,6 +235,40 @@ class Via(SipHeader):
         return res
 
 
+class RecordRoute(SipHeader):
+    __NAME__ = 'Record-Route'
+
+    def __init__(self,
+                 user_info: Optional[str] = None,
+                 host_ip: Optional[str] = None,
+                 params: Optional[Dict[str, str]] = None):
+        self.user_info = user_info
+        self.host_ip = host_ip
+        self.params = params
+
+    def parse_from(self, value: str):
+        match = re.search(r"^<sip:(.+)?@(.+)(?:;(.+))?>$", value)
+        assert match is not None, f"Invalid '{self.name}' header: {value}"
+        self.user_info = match.group(1)
+        self.host_ip = match.group(2)
+
+        params = match.group(3)
+        if params is not None:
+            params = [param.split('=', 1) for param in params.split(';')]
+            self.params = {param[0]: param[1] for param in params}
+        else:
+            self.params = None
+
+    def compose(self) -> str:
+        res = '<sip:'
+        if self.user_info:
+            res += f'{self.user_info}@'
+        res += self.host_ip
+        if self.params:
+            res += ';' + ';'.join([f"{k}={v}" for k,v in self.params.items()])
+        return res
+
+
 class Authorization(SipHeader):
     __NAME__ = 'Authorization'
 
@@ -353,4 +387,4 @@ class WWWAuthenticate(SipHeader):
         return f"{self.scheme.value} {values}"
 
 
-HEADERS = [CSeq, CallID, From, To, Contact, ContentLength, MaxForwards, Expires, Via, Authorization, WWWAuthenticate]
+HEADERS = [CSeq, CallID, From, To, Contact, ContentLength, MaxForwards, Expires, Via, RecordRoute, Authorization, WWWAuthenticate]

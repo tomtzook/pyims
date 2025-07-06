@@ -46,6 +46,7 @@ class CallOutStream(ReadableStream[bytes]):
         self._is_reading = False
         self._callback = None
         self._streams = deque()
+        self._current_stream = None
 
     def start_read(self, callback: Callable[[Optional[bytes]], None]):
         self._is_reading = True
@@ -55,16 +56,21 @@ class CallOutStream(ReadableStream[bytes]):
             self._start_read_next()
 
     def attach_stream(self, stream: ReadableStream[bytes]):
-        pass
+        self._streams.append(stream)
+
+        if self._is_reading and self._current_stream is None:
+            self._start_read_next()
 
     def _start_read_next(self):
         if len(self._streams) < 1:
             # we are done
+            self._current_stream = None
             self._callback(None)
             return
 
         stream = self._streams.popleft()
         stream.start_read(self._on_read)
+        self._current_stream = stream
 
     def _on_read(self, data: Optional[bytes]):
         if data is None:

@@ -7,7 +7,7 @@ from .auth import Account, create_auth_header
 from .bodies import wrap_body
 from .call import CallSession, CallInformation, RtpCallSession, SessionNode
 from .headers import Header, CSeq, Via, CallID, Expires, MaxForwards, CustomHeader, From, To, \
-    Contact, WWWAuthenticate
+    Contact, WWWAuthenticate, RecordRoute
 from .message import RequestMessage, ResponseMessage, Message
 from .sip_types import Method, Version, StatusCode, MessageType, Status
 from .transport import Transport, Transaction
@@ -91,9 +91,9 @@ class Client(object):
         local_info = SdpMessage(
             fields=[
                 sdp_fields.Version(0),
-                sdp_fields.Originator('-', str(session_id), '1', NetworkType.IN, AddressType.IPv4, '172.22.0.1'),
+                sdp_fields.Originator('-', str(session_id), '1', NetworkType.IN, AddressType.IPv4, self._local_address.ip),
                 sdp_fields.SessionName('pyims Call'),
-                sdp_fields.ConnectionInformation(NetworkType.IN, AddressType.IPv4, '172.22.0.1'),
+                sdp_fields.ConnectionInformation(NetworkType.IN, AddressType.IPv4, self._local_address.ip),
                 sdp_fields.MediaDescription(MediaType.AUDIO, rtp_port, MediaProtocol.RTP_AVP, [MediaFormat.PCMU]),
                 sdp_fields.BandwidthInformation('AS', 84),
                 sdp_fields.BandwidthInformation('TIAS', 64000),
@@ -102,9 +102,9 @@ class Client(object):
             attributes=[
                 sdp_attributes.RtpMap(MediaFormat.PCMU, 'PCMU', 8000),
                 sdp_attributes.RtpMap(MediaFormat.PCMA, 'PCMA', 8000),
-                sdp_attributes.RtpMap(MediaFormat.EVENT, 'telephony-event', 8000),
+                #sdp_attributes.RtpMap(MediaFormat.EVENT, 'telephony-event', 8000),
                 sdp_attributes.Fmtp(MediaFormat.PCMU, ['mode-change-capability=2', 'max-red=0']),
-                sdp_attributes.Fmtp(MediaFormat.EVENT, ['0-16']),
+                #sdp_attributes.Fmtp(MediaFormat.EVENT, ['0-16']),
                 sdp_attributes.Rtcp(rtp_port + 1),
                 sdp_attributes.SendRecv(),
                 sdp_attributes.Ptime(20)
@@ -251,7 +251,6 @@ class Client(object):
             headers = list()
 
         request = RequestMessage(Version.VERSION_2, method, target_uri, headers, wrap_body(body, content_type))
-        request.add_header(Via(Version.VERSION_2, self._transport.name, self._local_address, branch=self._generate_branch(method)))
         self._added_headers_to_message(request, method, seq_num)
 
         return request
@@ -278,6 +277,7 @@ class Client(object):
         message.add_header(CSeq(method, seq_num), override=False)
         message.add_header(MaxForwards(70), override=False)
         message.add_header(Expires(1800), override=False)
+        message.add_header(Via(Version.VERSION_2, self._transport.name, self._local_address, branch=self._generate_branch(method)), override=False)
 
     def _on_messages(self):
         if self._transaction is None or self._in_transaction:
@@ -319,7 +319,9 @@ class Client(object):
             headers=[
                 request.header(From),
                 request.header(To),
-                request.header(CallID)
+                request.header(CallID),
+                request.header(Via),
+                request.header(RecordRoute)
             ],
             body=local_sdp
         ))

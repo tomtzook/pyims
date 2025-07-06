@@ -40,25 +40,40 @@ class Message(ABC):
         headers = headers if headers else list()
 
         self._version = version
-        self._headers = {header.name: header for header in headers}
+        self._headers = dict()
         self._body = body
+
+        [self.add_header(header) for header in headers]
+
 
     @property
     def version(self) -> Version:
         return self._version
 
     @property
-    def headers(self) -> Dict[str, SipHeader]:
+    def headers(self) -> Dict[str, List[SipHeader]]:
         return self._headers
 
     def header(self, name: Union[str, T]) -> T:
         wanted_name = name if isinstance(name, str) else name.__NAME__
-        return self._headers[wanted_name]
+        val = self._headers[wanted_name]
+        if len(val) == 0:
+            raise KeyError()
+        elif len(val) == 1:
+            return val[0]
+        else:
+            return val
 
-    def add_header(self, header: SipHeader, override: bool = True):
-        if header.name in self._headers and not override:
-            return
-        self._headers[header.name] = header
+    def add_header(self, header: Union[SipHeader, List[SipHeader]], override: bool = False):
+        headers = header if isinstance(header, list) else [header]
+        for header in headers:
+            if header.name in self._headers:
+                if override:
+                    self._headers[header.name] = [header]
+                else:
+                    self._headers[header.name].append(header)
+            else:
+                self._headers[header.name] = [header]
 
     @property
     def body(self) -> Body:
@@ -77,25 +92,25 @@ class Message(ABC):
         pass
 
     def compose(self) -> str:
-        headers = dict(self._headers)
+        headers = list()
+        for header_lst in self._headers.values():
+            headers.extend(header_lst)
+
         body_str = ''
         if self._body is not None:
             if self._body.content_type is not None:
-                header = CustomHeader('Content-Type', self._body.content_type)
-                headers[header.name] = header
+                headers.append(CustomHeader('Content-Type', self._body.content_type))
 
             body_str = self._body.compose()
             assert body_str is not None
 
-            header = ContentLength(len(body_str))
-            headers[header.name] = header
+            headers.append(ContentLength(len(body_str)))
         else:
-            header = ContentLength(0)
-            headers[header.name] = header
+            headers.append(ContentLength(0))
 
         res = ''
         if len(headers) > 0:
-            res += '\r\n'.join([f"{header.name}: {header.compose()}" for header in headers.values()])
+            res += '\r\n'.join([f"{header.name}: {header.compose()}" for header in headers])
         res += '\r\n\r\n' + body_str + '\r\n'
 
         return res
