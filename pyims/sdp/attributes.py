@@ -110,6 +110,19 @@ class Ptime(Attribute):
         return str(self.time)
 
 
+class MaxPtime(Attribute):
+    __NAME__ = 'maxptime'
+
+    def __init__(self, time: Optional[int] = None):
+        self.time = time
+
+    def parse_from(self, value: str):
+        self.time = int(value)
+
+    def compose(self) -> str:
+        return str(self.time)
+
+
 class Transmit(CustomAttribute):
 
     def __init__(self, transmit_type: TransmitType):
@@ -121,27 +134,31 @@ class Transmit(CustomAttribute):
 
 
 class RecvOnly(Transmit):
+    __NAME__ = TransmitType.RECVONLY.value
 
     def __init__(self):
         super().__init__(TransmitType.RECVONLY)
 
 
 class SendRecv(Transmit):
+    __NAME__ = TransmitType.SENDRECV.value
 
     def __init__(self):
         super().__init__(TransmitType.SENDRECV)
 
 
 class SendOnly(Transmit):
+    __NAME__ = TransmitType.SENDONLY.value
 
     def __init__(self):
         super().__init__(TransmitType.SENDONLY)
 
 
 class Inactive(Transmit):
+    __NAME__ = TransmitType.INACTIVE.value
 
     def __init__(self):
         super().__init__(TransmitType.INACTIVE)
 
 
-ATTRIBUTES = [RtpMap, Fmtp, Rtcp, Ptime, RecvOnly, SendRecv, SendOnly, Inactive]
+ATTRIBUTES = [RtpMap, Fmtp, Rtcp, Ptime, MaxPtime, RecvOnly, SendRecv, SendOnly, Inactive]

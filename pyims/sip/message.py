@@ -89,11 +89,14 @@ class Message(ABC):
 
             header = ContentLength(len(body_str))
             headers[header.name] = header
+        else:
+            header = ContentLength(0)
+            headers[header.name] = header
 
         res = ''
         if len(headers) > 0:
             res += '\r\n'.join([f"{header.name}: {header.compose()}" for header in headers.values()])
-        res += '\r\n\r\n' + body_str
+        res += '\r\n\r\n' + body_str + '\r\n'
 
         return res
 

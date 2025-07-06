@@ -30,12 +30,16 @@ class SdpMessage(object):
         wanted_name = name if isinstance(name, str) else name.__NAME__
 
         lst = []
-        for field in self._fields.values():
-            if not isinstance(field, AttributeField):
-                continue
+        for fields in self._fields.values():
+            if not isinstance(fields, list):
+                fields = [fields]
 
-            if field.attribute.name == wanted_name:
-                lst.append(field.attribute)
+            for field in fields:
+                if not isinstance(field, AttributeField):
+                    continue
+
+                if field.attribute.name == wanted_name:
+                    lst.append(field.attribute)
 
         return lst
 
