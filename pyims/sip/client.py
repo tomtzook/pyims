@@ -15,7 +15,6 @@ from ..nio.inet import InetAddress
 from ..nio.sockets import UdpSocket
 from ..sdp import attributes as sdp_attributes
 from ..sdp import fields as sdp_fields
-from ..sdp.attributes import RtpMap, Fmtp
 from ..sdp.message import SdpMessage
 from ..sdp.sdp_types import NetworkType, AddressType, MediaType, MediaProtocol, MediaFormat
 
@@ -49,6 +48,9 @@ class Client(object):
 
         logger.info('Client starting registration with network')
 
+        tag = '2111'
+        call_id = '222112'
+
         def _on_response(transaction: Transaction, response: ResponseMessage) -> Tuple[bool, None]:
             if response.status.code == StatusCode.TRYING:
                 return False, None
@@ -60,12 +62,12 @@ class Client(object):
                 auth_header = response.header(WWWAuthenticate)
                 assert isinstance(auth_header, WWWAuthenticate)
 
-                transaction.send(self._create_request_register(auth_header))
+                transaction.send(self._create_request_register(tag, call_id, auth_header))
                 return False, None
             else:
                 raise RuntimeError(f"Register failed: {response.status}")
 
-        self._do_transaction(self._create_request_register(), _on_response)
+        self._do_transaction(self._create_request_register(tag, call_id), _on_response)
 
     def bye(self):
         if not self._is_registered:
@@ -85,6 +87,10 @@ class Client(object):
     def invite(self, invitee: str, subject: str) -> CallSession:
         session_id = self._generate_session_id()
         rtp_port = self._generate_port()
+        tag = '111'
+        branch = self._generate_branch(Method.INVITE)
+        call_id = '112222'
+
         session_node = SessionNode(session_id)
         self._active_sessions[session_id] = session_node
 
@@ -117,21 +123,17 @@ class Client(object):
                 remote_info = response.body_as(SdpMessage)
                 session = self._create_call_session(local_info, remote_info)
                 session_node.attach_session(session)
+
+                transaction.send(self._create_request_ack(invitee, subject, tag, branch, call_id))
+
                 return True, session
             else:
                 raise RuntimeError(f"Invite failed: {response.status}")
 
-        return self._do_transaction(self._create_request_invite(invitee, subject, local_info), _on_response)
+        return self._do_transaction(self._create_request_invite(invitee, subject, tag, branch, call_id, local_info), _on_response)
 
     def close(self):
         if self._transaction is not None:
-            if self._is_registered:
-                try:
-                    self.bye()
-                except:
-                    # we don't care really if this fails
-                    pass
-
             self._transport.close()
 
         self._transaction = None
@@ -181,13 +183,13 @@ class Client(object):
 
         self._transaction.send(response)
 
-    def _create_request_register(self, authenticate_header: Optional[WWWAuthenticate] = None) -> RequestMessage:
+    def _create_request_register(self, tag: str, call_id: str, authenticate_header: Optional[WWWAuthenticate] = None) -> RequestMessage:
         return self._create_request(
             Method.REGISTER,
             headers=[
-                self._generate_from(*self._my_credentials, tag='1'),
+                self._generate_from(*self._my_credentials, tag=tag),
                 self._generate_to(*self._my_credentials),
-                CallID(f"1-119985@{self._local_address.ip}"),
+                CallID(f"{call_id}@{self._local_address.ip}"),
                 CustomHeader('Supported', 'path'),
                 CustomHeader(
                     'P-Access-Network-Info',
@@ -202,14 +204,14 @@ class Client(object):
             ]
         )
 
-    def _create_request_invite(self, invitee: str, subject: str, sdp: SdpMessage) -> RequestMessage:
+    def _create_request_invite(self, invitee: str, subject: str, tag: str, branch: str, call_id: str, sdp: SdpMessage) -> RequestMessage:
         return self._create_request(
             Method.INVITE,
             target_uri=f"sip:{invitee}",
             headers=[
-                self._generate_from(*self._my_credentials, tag='1'),
+                self._generate_from(*self._my_credentials, tag=tag),
                 To(uri=f"sip:{invitee}"),
-                CallID(f"1-119985@{self._local_address.ip}"),
+                CallID(f"{call_id}@{self._local_address.ip}"),
                 CustomHeader('Supported', 'path'),
                 CustomHeader(
                     'P-Access-Network-Info',
@@ -218,7 +220,27 @@ class Client(object):
                 CustomHeader('Subject', subject),
                 self._generate_our_contact()
             ],
-            body=sdp
+            body=sdp,
+            branch=branch
+        )
+
+    def _create_request_ack(self, invitee: str, subject: str, tag: str, branch: str, call_id: str) -> RequestMessage:
+        return self._create_request(
+            Method.ACK,
+            target_uri=f"sip:{invitee}",
+            headers=[
+                self._generate_from(*self._my_credentials, tag=tag),
+                To(uri=f"sip:{invitee}"),
+                CallID(f"{call_id}@{self._local_address.ip}"),
+                CustomHeader('Supported', 'path'),
+                CustomHeader(
+                    'P-Access-Network-Info',
+                    '3GPP-E-UTRAN-FDD; utran-cell-id-3gpp=001010001000019B'
+                ),
+                CustomHeader('Subject', subject),
+                self._generate_our_contact()
+            ],
+            branch=branch
         )
 
     def _create_request_bye(self) -> RequestMessage:
@@ -244,7 +266,8 @@ class Client(object):
                         target_uri: Optional[str] = None,
                         headers: List[Header] = None,
                         body: Optional[Any] = None,
-                        content_type: Optional[str] = None) -> RequestMessage:
+                        content_type: Optional[str] = None,
+                        branch: Optional[str] = None) -> RequestMessage:
         if target_uri is None:
             target_uri = f"sip:{self._server_host}"
         if headers is None:
@@ -252,6 +275,10 @@ class Client(object):
 
         request = RequestMessage(Version.VERSION_2, method, target_uri, headers, wrap_body(body, content_type))
         self._added_headers_to_message(request, method, seq_num)
+
+        branch = branch or self._generate_branch(method)
+        request.add_header(Via(Version.VERSION_2, self._transport.name, self._local_address, branch=branch),
+                           override=False)
 
         return request
 
@@ -277,7 +304,6 @@ class Client(object):
         message.add_header(CSeq(method, seq_num), override=False)
         message.add_header(MaxForwards(70), override=False)
         message.add_header(Expires(1800), override=False)
-        message.add_header(Via(Version.VERSION_2, self._transport.name, self._local_address, branch=self._generate_branch(method)), override=False)
 
     def _on_messages(self):
         if self._transaction is None or self._in_transaction:

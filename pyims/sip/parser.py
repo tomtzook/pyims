@@ -16,7 +16,12 @@ def _read_headers(data: str):
             continue
 
         key, value = line.split(":", 1)
-        headers[key.strip()] = value.strip()
+        key = key.strip()
+        value = value.strip()
+        if key in headers:
+            headers[key].append(value)
+        else:
+            headers[key] = [value]
 
     return lines[0], headers
 
@@ -39,18 +44,20 @@ def _get_content_type(headers: List[Header]) -> Optional[str]:
     return headers[0].value
 
 
-def _parse_header(top_header: str, headers: Dict[str, str]):
+def _parse_header(top_header: str, headers: Dict[str, List[str]]):
     parsed_headers = list()
     message_type = None
     type_header = None
 
-    for header in HEADERS:
-        header = header()
+    for header_cls in HEADERS:
+        header = header_cls()
         if header.name not in headers:
             continue
 
-        header.parse_from(headers[header.name])
-        parsed_headers.append(header)
+        for value in headers[header.name]:
+            header = header_cls()
+            header.parse_from(value)
+            parsed_headers.append(header)
 
     type_line = top_header.split(" ")
     if type_line[0] in METHODS:
@@ -101,9 +108,9 @@ def parse(data: str, start_idx: int = 0) -> Tuple[Message, int]:
     body_len = _get_body_length(parsed_headers)
     body = data[start_idx+headers_end+1:start_idx+headers_end+1+body_len] if body_len > 1 else ''
 
-    for name, value in raw_headers.items():
+    for name, values in raw_headers.items():
         if not any([header for header in parsed_headers if name == header.name]):
-            parsed_headers.append(CustomHeader(name, value))
+            parsed_headers.extend([CustomHeader(name, value) for value in values])
 
     body = parse_body(body, body_len, _get_content_type(parsed_headers))
 

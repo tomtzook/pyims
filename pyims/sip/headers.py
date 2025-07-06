@@ -1,5 +1,5 @@
 from abc import ABC
-from typing import Optional, Dict
+from typing import Optional, Dict, Union
 import re
 
 from ..nio.inet import InetAddress
@@ -208,7 +208,7 @@ class Via(SipHeader):
 
     def __init__(self, version: Optional[Version] = None,
                  transport: Optional[str] = None,
-                 address: Optional[InetAddress] = None,
+                 address: Optional[Union[InetAddress, str]] = None,
                  rport: Optional[str] = None,
                  branch: Optional[str] = None):
         self.version: Optional[Version] = version
@@ -222,12 +222,15 @@ class Via(SipHeader):
         assert match is not None, f"Invalid '{self.name}' header: {value}"
         self.version = VERSIONS_BY_STR[match.group(1)]
         self.transport = match.group(2)
-        self.address = InetAddress(*match.group(3).split(':', 1))
+        if ':' in match.group(3):
+            self.address = InetAddress(*(match.group(3).split(':', 1)))
+        else:
+            self.address = match.group(3)
         self.rport = match.group(4)
         self.branch = match.group(5)
 
     def compose(self) -> str:
-        res = f"{self.version.value}/{self.transport} {self.address.ip}:{self.address.port}"
+        res = f"{self.version.value}/{self.transport} {self.address}"
         if self.rport:
             res += f";rport={self.rport}"
         if self.branch:
@@ -266,6 +269,7 @@ class RecordRoute(SipHeader):
         res += self.host_ip
         if self.params:
             res += ';' + ';'.join([f"{k}={v}" for k,v in self.params.items()])
+        res += '>'
         return res
 
 

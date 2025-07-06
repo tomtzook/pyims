@@ -1,4 +1,5 @@
 from typing import Tuple, Optional, Callable
+import logging
 
 from .codecs import Encoder, Decoder
 from .rtp_types import RtpPacket, parse_rtp_packet
@@ -6,6 +7,8 @@ from ..nio.inet import InetAddress
 from ..nio.sockets import UdpSocket
 from ..nio.streams import ReadableStream, WritableStream
 from ..sdp.sdp_types import MediaFormat
+
+logger = logging.getLogger('pyims.rtp.stream')
 
 
 class RtpStream(object):
@@ -39,9 +42,12 @@ class RtpStream(object):
 
     def _on_local_data(self, data: Optional[bytes]):
         if data is None:
+            logger.info('[RTP] local EOF')
             if self._complete_callback:
                 self._complete_callback()
             return
+
+        logger.info('[RTP] new data to send (len %d)', len(data))
 
         payload = self._encoder.encode(data)
         packet = RtpPacket(
@@ -58,13 +64,13 @@ class RtpStream(object):
 
     def _on_remote_data(self, data_p: Optional[Tuple[InetAddress, bytes]]):
         if data_p is None:
+            logger.info('[RTP] remote EOF')
             self._sink.write_done()
             return
 
         sender, data = data_p
-        if sender != self._remote:
-            return
 
+        logger.info('[RTP] new data received (len %d)', len(data))
         packet = parse_rtp_packet(data)
 
         if packet.payload_format != self._format:

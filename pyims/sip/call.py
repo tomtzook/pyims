@@ -114,7 +114,8 @@ class CallSession(ABC):
         self._call_out.attach_stream(WaveFileReadableStream(path, self.info.sample_rate, 2))
 
     def sink_in_to_file(self, path: Path):
-        self._call_in.attach(WaveFileWritableStream(path, self.info.sample_rate, self.info.audio_channels, 2))
+        channels = self.info.audio_channels if self.info.audio_channels is not None else 1
+        self._call_in.attach(WaveFileWritableStream(path, self.info.sample_rate, channels, 2))
 
     def terminate(self):
         pass
