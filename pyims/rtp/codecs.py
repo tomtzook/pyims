@@ -22,25 +22,25 @@ class Decoder(ABC):
 class PcmuEncoder(Encoder):
 
     def encode(self, data: bytes) -> bytes:
-        return audioop.lin2ulaw(data, 2)
+        return audioop.lin2ulaw(data, PCMU.sample_width)
 
 
 class PcmuDecoder(Decoder):
 
     def decode(self, data: bytes) -> bytes:
-        return audioop.ulaw2lin(data, 2)
+        return audioop.ulaw2lin(data, PCMU.sample_width)
 
 
 class PcmaEncoder(Encoder):
 
     def encode(self, data: bytes) -> bytes:
-        return audioop.lin2alaw(data, 2)
+        return audioop.lin2alaw(data, PCMA.sample_width)
 
 
 class PcmaDecoder(Decoder):
 
     def decode(self, data: bytes) -> bytes:
-        return audioop.alaw2lin(data, 2)
+        return audioop.alaw2lin(data, PCMA.sample_width)
 
 
 # see https://datatracker.ietf.org/doc/html/rfc3551 tables 4 and 5

@@ -40,6 +40,9 @@ class RtpStream(object):
         self._socket.start_read(self._on_remote_data)
         self._source.start_read(self._on_local_data)
 
+    def stop(self):
+        self._socket.close()
+
     def _on_local_data(self, data: Optional[bytes]):
         if data is None:
             logger.info('[RTP] local EOF')

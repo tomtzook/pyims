@@ -1,43 +1,96 @@
-import enum
 import io
+import random
 from abc import ABC, abstractmethod
 from collections import deque
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Optional, List
 
 from ..nio.inet import InetAddress
+from ..nio import create_udp_socket, UdpSocket
 from ..nio.streams import ReadableStream, WritableStream
 from ..rtp.audio_streams import WaveFileWritableStream, WaveFileReadableStream
-from ..sdp.message import SdpMessage
-from ..sdp.fields import ConnectionInformation, MediaDescription
-from ..sdp.attributes import RtpMap
-from ..rtp.codecs import get_encoder, get_decoder, MediaFormat
+from ..rtp.codecs import get_encoder, get_decoder
 from ..rtp.stream import RtpStream
-from ..nio.sockets import UdpSocket
-from ..sdp.sdp_types import AddressType, MediaType, MediaProtocol
+from ..sdp.message import SdpMessage
+from ..common.media_formats import PCMU, MediaFormat
+from ..sdp import attributes as sdp_attributes
+from ..sdp import fields as sdp_fields
+from ..sdp.sdp_types import NetworkType, AddressType, MediaType, MediaProtocol
 
 
-class CallInformation(object):
+class RtpRequest(object):
 
-    def __init__(self, local_info: SdpMessage, remote_info: SdpMessage):
-        local_conn_info = local_info.field(ConnectionInformation)
-        local_media_info = local_info.field(MediaDescription)
-        remote_conn_info = remote_info.field(ConnectionInformation)
-        remote_media_info = remote_info.field(MediaDescription)
+    def __init__(self,
+                 session_id: Optional[int] = None,
+                 address: Optional[InetAddress] = None,
+                 supported_formats: Optional[List[MediaFormat]] = None):
+        self.session_id = session_id
+        self.address = address
+        self.supported_formats = supported_formats
 
-        assert local_conn_info.address_type == remote_conn_info.address_type == AddressType.IPv4
-        assert local_media_info.media_type == remote_media_info.media_type == MediaType.AUDIO
-        assert local_media_info.protocol == remote_media_info.protocol == MediaProtocol.RTP_AVP
-        assert len(local_media_info.formats) > 0 and len(remote_media_info.formats) > 0
-        assert local_media_info.formats[0] in remote_media_info.formats
+    def parse_from_sdp(self, sdp: SdpMessage):
+        originator = sdp.field(sdp_fields.Originator)
+        conn_info = sdp.field(sdp_fields.ConnectionInformation)
+        media_info = sdp.field(sdp_fields.MediaDescription)
 
-        self.local_address: InetAddress = InetAddress(local_conn_info.address, local_media_info.port)
-        self.remote_address: InetAddress = InetAddress(remote_conn_info.address, remote_media_info.port)
-        self.media_format: MediaFormat = local_media_info.formats[0]
+        assert conn_info.address_type == AddressType.IPv4
+        assert media_info.media_type == MediaType.AUDIO
+        assert media_info.protocol == MediaProtocol.RTP_AVP
+        assert len(media_info.formats) > 0
+        assert PCMU in media_info.formats
+        assert len(sdp.attribute(sdp_attributes.SendRecv)) > 0
 
-        rtp_map = [rtpmap for rtpmap in local_info.attribute(RtpMap) if rtpmap.media_format == self.media_format][0]
-        self.sample_rate: int = rtp_map.sample_rate
-        self.audio_channels: int = rtp_map.audio_channels
+        known_rtpmap = [rtpmap.media_format for rtpmap in sdp.attribute(sdp_attributes.RtpMap) if rtpmap.media_format is not None]
+        known_fmtp = [fmtp.media_format for fmtp in sdp.attribute(sdp_attributes.Fmtp) if fmtp.media_format is not None]
+        assert len(known_rtpmap) > 0
+        assert len(known_fmtp) > 0
+
+        self.session_id = originator.session_id
+        self.address = InetAddress(conn_info.address, media_info.port)
+        self.supported_formats = list(set(known_rtpmap + known_fmtp))
+
+    def compose_to_sdp(self) -> SdpMessage:
+        attributes: List[sdp_attributes.Attribute] = [
+            sdp_attributes.Rtcp(self.address.port + 1),
+            sdp_attributes.SendRecv(),
+            sdp_attributes.Ptime(20)
+        ]
+        attributes.extend([sdp_attributes.RtpMap(f) for f in self.supported_formats])
+        attributes.extend([sdp_attributes.Fmtp(f, ['mode-change-capability=2', 'max-red=0']) for f in self.supported_formats])
+
+        # sdp_attributes.RtpMap(MediaFormat.EVENT, 'telephony-event', 8000),
+        # sdp_attributes.Fmtp(MediaFormat.EVENT, ['0-16']),
+
+        return SdpMessage(
+            fields=[
+                sdp_fields.Version(0),
+                sdp_fields.Originator(
+                    '-',
+                    str(self.session_id),
+                    '1',
+                    NetworkType.IN,
+                    AddressType.IPv4,
+                    self.address.ip),
+                sdp_fields.SessionName('pyims Call'),
+                sdp_fields.ConnectionInformation(NetworkType.IN, AddressType.IPv4, self.address.ip),
+                sdp_fields.MediaDescription(
+                    MediaType.AUDIO,
+                    self.address.port,
+                    MediaProtocol.RTP_AVP,
+                    self.supported_formats),
+                sdp_fields.BandwidthInformation('AS', 84),
+                sdp_fields.BandwidthInformation('TIAS', 64000),
+                sdp_fields.TimeDescription(0, 0)
+            ],
+            attributes=attributes)
+
+
+class CallInfo(object):
+
+    def __init__(self, local_address: InetAddress, remote_address: InetAddress, media_format: MediaFormat):
+        self.local_address = local_address
+        self.remote_address = remote_address
+        self.media_format = media_format
 
 
 class CallOutStream(ReadableStream[bytes]):
@@ -103,48 +156,12 @@ class CallInStream(WritableStream[bytes]):
             self._stream.write(data)
 
 
-class CallSession(ABC):
+class CallSession(object):
 
-    def __init__(self, info: CallInformation):
+    def __init__(self, info: CallInfo, skt: UdpSocket):
         self.info = info
         self._call_in = CallInStream()
         self._call_out = CallOutStream()
-
-    def play_audio_file(self, path: Path):
-        self._call_out.attach_stream(WaveFileReadableStream(path, self.info.sample_rate, 2))
-
-    def sink_in_to_file(self, path: Path):
-        channels = self.info.audio_channels if self.info.audio_channels is not None else 1
-        self._call_in.attach(WaveFileWritableStream(path, self.info.sample_rate, channels, 2))
-
-    def terminate(self):
-        pass
-
-
-class SessionState(enum.Enum):
-    INITIATING = 'init'
-    IN_PROGRESS = 'prog'
-    TERMINATED = 'term'
-
-
-class SessionNode(object):
-
-    def __init__(self, session_id: int,
-                 state: SessionState = SessionState.INITIATING,
-                 session: Optional[CallSession] = None):
-        self.session_id = session_id
-        self.state = state
-        self.session = session
-
-    def attach_session(self, session: CallSession):
-        self.session = session
-        self.state = SessionState.IN_PROGRESS
-
-
-class RtpCallSession(CallSession):
-
-    def __init__(self, info: CallInformation, skt: UdpSocket):
-        super().__init__(info)
         self._stream = RtpStream(
             skt,
             self._call_out,
@@ -157,5 +174,56 @@ class RtpCallSession(CallSession):
         )
         self._stream.start(self._on_stream_complete)
 
+    def play_audio_file(self, path: Path):
+        self._call_out.attach_stream(WaveFileReadableStream(path, self.info.media_format))
+
+    def sink_in_to_file(self, path: Path):
+        self._call_in.attach(WaveFileWritableStream(path, self.info.media_format))
+
+    def terminate(self):
+        self._stream.stop()
+
     def _on_stream_complete(self):
         print('_on_stream_complete')
+
+
+class CallHandler(ABC):
+
+    def __init__(self, local_address: str, supported_formats: List[MediaFormat]):
+        self._next_session_id = 1
+        self._local_address = local_address
+        self._supported_formats = supported_formats
+        self._sessions = dict()
+
+    def on_invite(self, msg: RtpRequest) -> Optional[RtpRequest]:
+        session_id = self._next_session_id
+        port = random.randint(40000, 50000)
+        local_address = InetAddress(self._local_address, port)
+        selected_format = [fmt for fmt in msg.supported_formats if fmt in self._supported_formats][0]
+
+        info = CallInfo(local_address, msg.address, selected_format)
+        skt = create_udp_socket(bind_addr=info.local_address)
+        session = CallSession(info, skt)
+        self._sessions[session_id] = session
+
+        self.call_initiated(session)
+
+        self._next_session_id += 1
+        rsp = RtpRequest(session_id, local_address, [selected_format])
+        return rsp
+
+    def on_ack(self, local_req: RtpRequest, remote_req: RtpRequest) -> bool:
+        selected_format = remote_req.supported_formats[0]
+        assert selected_format in self._supported_formats
+
+        info = CallInfo(local_req.address, remote_req.address, selected_format)
+        skt = create_udp_socket(bind_addr=info.local_address)
+        session = CallSession(info, skt)
+        self._sessions[local_req.session_id] = session
+
+        self.call_initiated(session)
+        return True
+
+    @abstractmethod
+    def call_initiated(self, session: CallSession):
+        pass

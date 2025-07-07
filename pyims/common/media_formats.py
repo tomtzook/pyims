@@ -9,18 +9,20 @@ class MediaType(enum.Enum):
 
 class MediaFormat(object):
 
-    def __init__(self, name: str, media_type: MediaType, bitrate: int, sample_width: int, channels: int):
+    def __init__(self, name: str, media_type: MediaType, bitrate: int, sample_rate: int, sample_width: int, channels: int):
         """
 
         :param name:
         :param media_type:
         :param bitrate: bit rate in bits/s
+        :param sample_rate: same rate in samples/s
         :param sample_width: sample width in bytes
         :param channels: channel count
         """
         self._name = name
         self._media_type = media_type
         self._bitrate = bitrate
+        self._sample_rate = sample_rate
         self._sample_width = sample_width
         self._channels = channels
 
@@ -40,7 +42,7 @@ class MediaFormat(object):
     @property
     def sample_rate(self) -> int:
         # samplerate = bitrate / (samplewidth * 8)
-        return self._bitrate // (self._sample_width * 8)
+        return self._sample_rate
 
     @property
     def sample_width(self) -> int:
@@ -52,8 +54,9 @@ class MediaFormat(object):
         return self._channels
 
 
-PCMU = MediaFormat('PCMU', MediaType.AUDIO, 64000, 1, 1)
-PCMA = MediaFormat('PCMA', MediaType.AUDIO, 64000, 1, 1)
+# todo: should be width of 1, but only works as 2. why?
+PCMU = MediaFormat('PCMU', MediaType.AUDIO, 64000, 8000, 2, 1)
+PCMA = MediaFormat('PCMA', MediaType.AUDIO, 64000, 8000, 2, 1)
 
 
 """
