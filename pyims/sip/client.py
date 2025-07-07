@@ -2,7 +2,7 @@ import logging
 from typing import Optional, Tuple, Any
 
 from .auth import Account, Authenticator
-from .call import CallHandler, RtpRequest
+from .call import CallHandler, InviteRequest
 from .headers import CustomHeader, Contact, WWWAuthenticate, RecordRoute, Via
 from .message import RequestMessage, ResponseMessage
 from .session import SipSession
@@ -56,7 +56,7 @@ class Client(object):
 
         self._session.run_transaction(self._create_request_register(tag, call_id), _on_response)
 
-    def bye(self):
+    def bye(self, remote: User):
         if not self._is_registered:
             return
 
@@ -69,9 +69,9 @@ class Client(object):
             else:
                 raise RuntimeError(f"Register failed: {response.status}")
 
-        self._session.run_transaction(self._create_request_bye(), _on_response)
+        self._session.run_transaction(self._create_request_bye(remote), _on_response)
 
-    def invite(self, invitee: User, subject: str, request: RtpRequest) -> RtpRequest:
+    def invite(self, invitee: User, subject: str, request: InviteRequest) -> InviteRequest:
         tag = self._session.generate_tag()
         branch = self._session.generate_branch(Method.INVITE)
         call_id = self._session.generate_callid()
@@ -83,16 +83,21 @@ class Client(object):
                 return False, None
             elif response.status.code == StatusCode.OK:
                 remote_info = response.body_as(SdpMessage)
-                remote_rtp_request = RtpRequest()
-                remote_rtp_request.parse_from_sdp(remote_info)
+                remote_request = InviteRequest.parse_from_sdp(remote_info)
 
-                if self._call_handler.on_ack(request, remote_rtp_request):
+                try:
+                    success = self._call_handler.on_ack(request, remote_request)
+                except Exception as e:
+                    success = False
+                    logger.exception('Error during call_handler.on_ack', exc_info=e)
+
+                if success:
                     transaction.send(self._create_request_ack(invitee, subject, tag, branch, call_id))
                 else:
                     # TODO: RETURN FAILURE
                     transaction.send(self._create_request_ack(invitee, subject, tag, branch, call_id))
 
-                return True, remote_rtp_request
+                return True, remote_request
             else:
                 raise RuntimeError(f"Invite failed: {response.status}")
 
@@ -140,20 +145,25 @@ class Client(object):
             target_uri_to_user=True
         )
 
-    def _create_request_bye(self) -> RequestMessage:
+    def _create_request_bye(self, remote: User) -> RequestMessage:
         return self._session.create_request(
             Method.BYE,
+            to=remote,
             seq_num=2,
-            include_self_in_target_uri=True
+            target_uri_to_user=True
         )
 
     def _on_invite_request(self, transaction: Transaction, request: RequestMessage):
-        remote_sdp = request.body_as(SdpMessage)
-        remote_request = RtpRequest()
-        remote_request.parse_from_sdp(remote_sdp)
+        remote_info = request.body_as(SdpMessage)
+        remote_request = InviteRequest.parse_from_sdp(remote_info)
 
         # TODO: HANDLE USER RINGING
-        response = self._call_handler.on_invite(remote_request)
+        try:
+            response = self._call_handler.on_invite(remote_request)
+        except Exception as e:
+            response = None
+            logger.exception('Error during call_handler.on_invite', exc_info=e)
+
         if response is not None:
             transaction.send(self._session.create_response(
                 StatusCode.OK,
