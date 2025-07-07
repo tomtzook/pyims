@@ -11,10 +11,10 @@ from ..rtp.audio_streams import WaveFileWritableStream, WaveFileReadableStream
 from ..sdp.message import SdpMessage
 from ..sdp.fields import ConnectionInformation, MediaDescription
 from ..sdp.attributes import RtpMap
-from ..rtp.codecs import get_encoder, get_decoder
+from ..rtp.codecs import get_encoder, get_decoder, MediaFormat
 from ..rtp.stream import RtpStream
 from ..nio.sockets import UdpSocket
-from ..sdp.sdp_types import AddressType, MediaType, MediaProtocol, MediaFormat
+from ..sdp.sdp_types import AddressType, MediaType, MediaProtocol
 
 
 class CallInformation(object):

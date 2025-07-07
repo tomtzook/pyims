@@ -2,11 +2,11 @@ from typing import Tuple, Optional, Callable
 import logging
 
 from .codecs import Encoder, Decoder
-from .rtp_types import RtpPacket, parse_rtp_packet
+from .packet import RtpPacket, parse_rtp_packet
 from ..nio.inet import InetAddress
 from ..nio.sockets import UdpSocket
 from ..nio.streams import ReadableStream, WritableStream
-from ..sdp.sdp_types import MediaFormat
+from .codecs import MediaFormat
 
 logger = logging.getLogger('pyims.rtp.stream')
 

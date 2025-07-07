@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List, Dict, Union, TypeVar, Optional, Generic, AnyStr, Any
+from typing import List, Dict, Union, TypeVar, Optional, Generic, AnyStr, Any, Type
 
 from .headers import SipHeader, Request, Response, ContentLength, CustomHeader
 from .sip_types import Version, MessageType, Method, Status, StatusCode
@@ -33,6 +33,8 @@ class Body(ABC, Generic[T]):
 
 
 class Message(ABC):
+    T_HEADER = TypeVar('T_HEADER', bound=Type[SipHeader])
+    T_BODY = TypeVar('T_BODY', bound=Type[Body])
 
     def __init__(self, version: Version,
                  headers: List[SipHeader] = None,
@@ -45,7 +47,6 @@ class Message(ABC):
 
         [self.add_header(header) for header in headers]
 
-
     @property
     def version(self) -> Version:
         return self._version
@@ -54,7 +55,7 @@ class Message(ABC):
     def headers(self) -> Dict[str, List[SipHeader]]:
         return self._headers
 
-    def header(self, name: Union[str, T]) -> T:
+    def header(self, name: Union[str, T_HEADER]) -> Union[List[T_HEADER], T_HEADER]:
         wanted_name = name if isinstance(name, str) else name.__NAME__
         val = self._headers[wanted_name]
         if len(val) == 0:
@@ -79,11 +80,12 @@ class Message(ABC):
     def body(self) -> Body:
         return self._body
 
-    def body_as(self, ty: type) -> Any:
+    def body_as(self, body_type: type) -> T_BODY:
         assert self._body is not None
 
         val = self._body.value
-        assert isinstance(val, ty)
+        assert isinstance(val, body_type)
+        # noinspection PyTypeChecker
         return val
 
     @property

@@ -1,9 +1,10 @@
 from abc import ABC
-from typing import Optional, List
+from typing import Optional, List, Union
 
+from ..rtp.codecs import MediaFormat, find_format, get_format_identifier
 from .sdp_types import (
     NetworkType, AddressType, MediaType, MediaProtocol,
-    MEDIA_TYPE_BY_STR, MEDIA_PROTOCOL_BY_STR, ADDRESS_TYPE_BY_STR, NETWORK_TYPE_BY_STR, MediaFormat
+    MEDIA_TYPE_BY_STR, MEDIA_PROTOCOL_BY_STR, ADDRESS_TYPE_BY_STR, NETWORK_TYPE_BY_STR
 )
 from .attributes import Attribute, ATTRIBUTES, CustomAttribute
 from ..util import Field
@@ -104,7 +105,7 @@ class MediaDescription(SdpField):
                  media_type: Optional[MediaType] = None,
                  port: Optional[int] = None,
                  protocol: Optional[MediaProtocol] = None,
-                 formats: Optional[List[MediaFormat]] = None):
+                 formats: Optional[List[Union[MediaFormat, int]]] = None):
         self.media_type = media_type
         self.port = port
         self.protocol = protocol
@@ -119,14 +120,23 @@ class MediaDescription(SdpField):
         self.protocol = MEDIA_PROTOCOL_BY_STR[value[2]]
 
         if len(value) > 3:
-            self.formats = [MediaFormat.get(int(e)) for e in value[3:]]
+            self.formats = []
+            for f in [int(e) for e in value[3:]]:
+                mf = find_format(rtp_id=f)
+                if mf is not None:
+                    self.formats.append(mf)
+                else:
+                    self.formats.append(f)
         else:
             self.formats = None
 
     def compose(self) -> str:
         lst = [self.media_type.value, str(self.port), self.protocol.value]
         if self.formats:
-            lst.extend([str(e.value) for e in self.formats])
+            for f in self.formats:
+                f_i = get_format_identifier(f) if isinstance(f, MediaFormat) else f
+                assert f_i is not None
+                lst.append(str(f_i))
 
         return " ".join(lst)
 

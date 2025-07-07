@@ -1,8 +1,9 @@
 from abc import ABC
-from typing import Optional, List
+from typing import Optional, List, Union
 
-from .sdp_types import MediaFormat, TransmitType, TRANSMIT_TYPE_BY_STR
-
+from .sdp_types import TransmitType, TRANSMIT_TYPE_BY_STR
+from ..common.media_formats import MediaFormat
+from ..rtp.codecs import get_format_identifier, find_format
 from ..util import Field
 
 
@@ -39,19 +40,27 @@ class RtpMap(Attribute):
 
     def __init__(self,
                  media_format: Optional[MediaFormat] = None,
+                 format_id: Optional[int] = None,
                  mime_type: Optional[str] = None,
                  sample_rate: Optional[int] = None,
                  audio_channels: Optional[int] = None):
         self.media_format = media_format
-        self.mime_type = mime_type
-        self.sample_rate = sample_rate
-        self.audio_channels = audio_channels
+        if media_format is not None:
+            self.format_id = get_format_identifier(media_format)
+            self.mime_type = media_format.name
+            self.sample_rate = media_format.sample_rate
+            self.audio_channels = media_format.channels
+        else:
+            self.format_id = format_id
+            self.mime_type = mime_type
+            self.sample_rate = sample_rate
+            self.audio_channels = audio_channels
 
     def parse_from(self, value: str):
         value = value.split(" ", 1)
         assert len(value) == 2
 
-        self.media_format = MediaFormat.get(int(value[0]))
+        self.format_id = int(value[0])
 
         value = value[1].split('/')
         self.mime_type = value[0]
@@ -60,28 +69,39 @@ class RtpMap(Attribute):
         if len(value) > 2:
             self.audio_channels = int(value[2])
 
+        self.media_format = find_format(rtp_id=self.format_id, name=self.mime_type)
+        if self.media_format is not None:
+            assert not self.audio_channels or self.media_format.channels == self.audio_channels
+            assert self.sample_rate == self.media_format.sample_rate
+
     def compose(self) -> str:
-        return f"{self.media_format.value} {self.mime_type}/{self.sample_rate}" + (f"/{self.audio_channels}" if self.audio_channels is not None else '')
+        return f"{self.format_id} {self.mime_type}/{self.sample_rate}" + (f"/{self.audio_channels}" if self.audio_channels is not None else '')
 
 
 class Fmtp(Attribute):
     __NAME__ = 'fmtp'
 
     def __init__(self,
-                 media_format: Optional[MediaFormat] = None,
+                 format_id: Optional[Union[MediaFormat, int]] = None,
                  params: Optional[List[str]] = None):
-        self.media_format = media_format
+        self.media_format = format_id if isinstance(format_id, MediaFormat) else None
+        self.format_id = format_id
         self.params = params
 
     def parse_from(self, value: str):
         value = value.split(" ", 1)
         assert len(value) == 2
 
-        self.media_format = MediaFormat.get(int(value[0]))
+        self.format_id = int(value[0])
+        self.media_format = find_format(rtp_id=self.format_id)
+        if self.media_format is not None:
+            self.format_id = self.media_format
+
         self.params = value[1].split(';')
 
     def compose(self) -> str:
-        return f"{self.media_format.value} {';'.join(self.params)}"
+        f_id = get_format_identifier(self.format_id) if isinstance(self.format_id, MediaFormat) else self.format_id
+        return f"{f_id} {';'.join(self.params)}"
 
 
 class Rtcp(Attribute):

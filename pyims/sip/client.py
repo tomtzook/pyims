@@ -11,12 +11,14 @@ from .headers import Header, CSeq, Via, CallID, Expires, MaxForwards, CustomHead
 from .message import RequestMessage, ResponseMessage, Message
 from .sip_types import Method, Version, StatusCode, MessageType, Status
 from .transport import Transport, Transaction
+from ..common.media_formats import PCMU, PCMA
 from ..nio.inet import InetAddress
 from ..nio.sockets import UdpSocket
 from ..sdp import attributes as sdp_attributes
 from ..sdp import fields as sdp_fields
 from ..sdp.message import SdpMessage
-from ..sdp.sdp_types import NetworkType, AddressType, MediaType, MediaProtocol, MediaFormat
+from ..sdp.sdp_types import NetworkType, AddressType, MediaType, MediaProtocol
+from ..rtp.codecs import MediaFormat
 
 logger = logging.getLogger('pyims.sip.client')
 
@@ -100,16 +102,16 @@ class Client(object):
                 sdp_fields.Originator('-', str(session_id), '1', NetworkType.IN, AddressType.IPv4, self._local_address.ip),
                 sdp_fields.SessionName('pyims Call'),
                 sdp_fields.ConnectionInformation(NetworkType.IN, AddressType.IPv4, self._local_address.ip),
-                sdp_fields.MediaDescription(MediaType.AUDIO, rtp_port, MediaProtocol.RTP_AVP, [MediaFormat.PCMU]),
+                sdp_fields.MediaDescription(MediaType.AUDIO, rtp_port, MediaProtocol.RTP_AVP, [PCMU, PCMA]),
                 sdp_fields.BandwidthInformation('AS', 84),
                 sdp_fields.BandwidthInformation('TIAS', 64000),
                 sdp_fields.TimeDescription(0, 0)
             ],
             attributes=[
-                sdp_attributes.RtpMap(MediaFormat.PCMU, 'PCMU', 8000),
-                sdp_attributes.RtpMap(MediaFormat.PCMA, 'PCMA', 8000),
+                sdp_attributes.RtpMap(PCMU),
+                sdp_attributes.RtpMap(PCMA),
                 #sdp_attributes.RtpMap(MediaFormat.EVENT, 'telephony-event', 8000),
-                sdp_attributes.Fmtp(MediaFormat.PCMU, ['mode-change-capability=2', 'max-red=0']),
+                sdp_attributes.Fmtp(PCMU, ['mode-change-capability=2', 'max-red=0']),
                 #sdp_attributes.Fmtp(MediaFormat.EVENT, ['0-16']),
                 sdp_attributes.Rtcp(rtp_port + 1),
                 sdp_attributes.SendRecv(),
@@ -397,18 +399,18 @@ class Client(object):
         assert remote_media_info.media_type == MediaType.AUDIO
         assert remote_media_info.protocol == MediaProtocol.RTP_AVP
         assert len(remote_media_info.formats) > 0
-        assert MediaFormat.PCMU in remote_media_info.formats
+        assert PCMU in remote_media_info.formats
         assert len(remote_info.attribute(sdp_attributes.SendRecv)) > 0
 
-        rtp_map = [rtpmap for rtpmap in remote_info.attribute(sdp_attributes.RtpMap) if rtpmap.media_format == MediaFormat.PCMU][0]
-        fmtp = [fmtp for fmtp in remote_info.attribute(sdp_attributes.Fmtp) if fmtp.media_format == MediaFormat.PCMU][0]
+        rtp_map = [rtpmap for rtpmap in remote_info.attribute(sdp_attributes.RtpMap) if rtpmap.media_format == PCMU][0]
+        fmtp = [fmtp for fmtp in remote_info.attribute(sdp_attributes.Fmtp) if fmtp.media_format == PCMU][0]
 
         return SdpMessage(fields=[
             sdp_fields.Version(0),
             sdp_fields.Originator('-', str(session_id), '1', NetworkType.IN, AddressType.IPv4, self._local_address.ip),
             sdp_fields.SessionName('pyims Call'),
             sdp_fields.ConnectionInformation(NetworkType.IN, AddressType.IPv4, self._local_address.ip),
-            sdp_fields.MediaDescription(MediaType.AUDIO, port, MediaProtocol.RTP_AVP, [MediaFormat.PCMU]),
+            sdp_fields.MediaDescription(MediaType.AUDIO, port, MediaProtocol.RTP_AVP, [PCMU]),
             sdp_fields.TimeDescription(0, 0)
         ] + remote_info.field(sdp_fields.BandwidthInformation), attributes=[
             rtp_map,

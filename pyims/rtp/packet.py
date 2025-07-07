@@ -1,7 +1,8 @@
 import struct
 from typing import List, Optional
 
-from ..sdp.sdp_types import MediaFormat
+from .codecs import MediaFormat, get_format_identifier, find_format
+
 
 class RtpPacket(object):
     HEADER_FORMAT = '!BBHII'
@@ -30,7 +31,10 @@ class RtpPacket(object):
         self.payload = payload
 
     def compose(self) -> bytes:
-        formatb = chr(self.payload_format.value).encode('utf-8')
+        pt_id = get_format_identifier(self.payload_format)
+        assert pt_id is not None
+
+        formatb = chr(pt_id).encode('utf-8')
         assert len(formatb) == 1
 
         b1 = (self.version & 3) << 6
@@ -62,6 +66,9 @@ def parse_rtp_packet(data: bytes) -> RtpPacket:
     assert version == 2
     assert not extension
 
+    pt_obj = find_format(rtp_id=pt)
+    assert pt_obj is not None, "unknown rtp format"
+
     csrc = []
     for i in range(0, cc):
         pos = 4 * i
@@ -77,7 +84,7 @@ def parse_rtp_packet(data: bytes) -> RtpPacket:
         payload = payload[pos:]
 
     return RtpPacket(
-        MediaFormat.get(pt),
+        pt_obj,
         seq_num,
         timestamp,
         ssrc,
